@@ -1,8 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import './App.css'
 import {
+  categoryName,
+  detectLocale,
+  localeOptions,
+  modeName,
+  normalizeLocale,
+  recentSessionDetail,
+  sequenceAcceptedDetail,
+  sessionCompleteDetail,
+  shortcutAction,
+  shortcutNote,
+  specialtyName,
+  t,
+  targetExpectedDetail,
+  targetWasDetail,
+  type Locale,
+} from './i18n'
+import {
   categories,
-  categoryLabel,
   comboSignature,
   formatCombo,
   getShortcuts,
@@ -11,7 +27,6 @@ import {
   shortcutSpecialty,
   sortModifiers,
   specialties,
-  specialtyLabel,
   type CategoryId,
   type KeyCombo,
   type Platform,
@@ -76,11 +91,11 @@ const initialStats = (): SessionStats => ({
   bestStreak: 0,
 })
 
-const emptyFeedback: Feedback = {
+const createEmptyFeedback = (locale: Locale): Feedback => ({
   kind: 'idle',
-  title: 'Ready',
-  detail: 'Focus the drill pad and begin.',
-}
+  title: t(locale, 'state.readyTitle'),
+  detail: t(locale, 'state.readyDetail'),
+})
 
 const detectPlatform = (): Platform => {
   if (typeof navigator === 'undefined') {
@@ -104,6 +119,7 @@ const loadSettings = () => {
       duration?: number
       count?: number
       theme?: Theme
+      locale?: Locale
     } | null
   } catch {
     return null
@@ -125,6 +141,9 @@ function App() {
   const [duration, setDuration] = useState(savedSettings?.duration ?? 60)
   const [targetCount, setTargetCount] = useState(savedSettings?.count ?? 25)
   const [theme, setTheme] = useState<Theme>(savedSettings?.theme ?? 'dark')
+  const [locale, setLocale] = useState<Locale>(
+    savedSettings?.locale ? normalizeLocale(savedSettings.locale) : detectLocale(),
+  )
   const [progress, setProgress] = useState(loadProgress)
   const [now, setNow] = useState(Date.now())
   const captureRef = useRef<HTMLDivElement>(null)
@@ -137,7 +156,7 @@ function App() {
     startedAt: null,
     finishedAt: null,
     stats: initialStats(),
-    feedback: emptyFeedback,
+    feedback: createEmptyFeedback(locale),
     sequenceBuffer: [],
   })
 
@@ -193,6 +212,7 @@ function App() {
         duration,
         count: targetCount,
         theme,
+        locale,
       }),
     )
   }, [
@@ -203,11 +223,16 @@ function App() {
     selectedSpecialty,
     targetCount,
     theme,
+    locale,
   ])
 
   useEffect(() => {
     document.body.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
 
   useEffect(() => {
     if (session.status !== 'running') {
@@ -276,8 +301,8 @@ function App() {
         status: 'idle',
         feedback: {
           kind: 'info',
-          title: 'Weak review is empty',
-          detail: 'Miss or skip a few shortcuts, then the review queue will appear.',
+          title: t(locale, 'state.weakEmptyTitle'),
+          detail: t(locale, 'state.weakEmptyDetail'),
         },
       }))
       return
@@ -295,8 +320,8 @@ function App() {
       sequenceBuffer: [],
       feedback: {
         kind: 'info',
-        title: 'Live',
-        detail: 'Every combo is captured in the drill pad.',
+        title: t(locale, 'state.liveTitle'),
+        detail: t(locale, 'state.liveDetail'),
       },
     })
   }
@@ -325,8 +350,8 @@ function App() {
         summary,
         feedback: {
           kind: 'info',
-          title: 'Session complete',
-          detail: `${summary.correct} correct at ${summary.spm.toFixed(1)} SPM.`,
+          title: t(locale, 'state.sessionCompleteTitle'),
+          detail: sessionCompleteDetail(locale, summary.correct, summary.spm),
         },
       }
     })
@@ -358,8 +383,12 @@ function App() {
         sequenceBuffer: nextBuffer,
         feedback: {
           kind: 'info',
-          title: 'Sequence',
-          detail: `${nextBuffer.length}/${expectedSequences[0].length} keys accepted.`,
+          title: t(locale, 'state.sequenceTitle'),
+          detail: sequenceAcceptedDetail(
+            locale,
+            nextBuffer.length,
+            expectedSequences[0].length,
+          ),
           combo: nextBuffer,
         },
       }))
@@ -389,7 +418,13 @@ function App() {
       }
 
       const nextStats = updateStats(current.stats, outcome)
-      const feedback = createFeedback(outcome, activeShortcut, pressed, platform)
+      const feedback = createFeedback(
+        outcome,
+        activeShortcut,
+        pressed,
+        platform,
+        locale,
+      )
 
       if (outcome === 'wrong' || outcome === 'close') {
         return {
@@ -421,8 +456,8 @@ function App() {
           sequenceBuffer: [],
           feedback: {
             kind: 'info',
-            title: 'Session complete',
-            detail: `${summary.correct} correct at ${summary.spm.toFixed(1)} SPM.`,
+            title: t(locale, 'state.sessionCompleteTitle'),
+            detail: sessionCompleteDetail(locale, summary.correct, summary.spm),
           },
           summary,
         }
@@ -451,6 +486,15 @@ function App() {
     })
   }
 
+  function changeLocale(nextLocale: Locale) {
+    setLocale(nextLocale)
+    setSession((current) =>
+      current.status === 'idle'
+        ? { ...current, feedback: createEmptyFeedback(nextLocale) }
+        : current,
+    )
+  }
+
   const progressForActive = activeShortcut
     ? progress.shortcutStats[activeShortcut.id]
     : undefined
@@ -461,10 +505,10 @@ function App() {
       <header className="topbar">
         <div className="brand-block">
           <span className="eyebrow">Shortcutype</span>
-          <strong>shortcut drills for dev muscle memory</strong>
+          <strong>{t(locale, 'brand.subtitle')}</strong>
         </div>
-        <div className="top-actions" aria-label="Global controls">
-          <div className="segmented" aria-label="Platform">
+        <div className="top-actions" aria-label={t(locale, 'global.controls')}>
+          <div className="segmented" aria-label={t(locale, 'controls.platform')}>
             {platforms.map((item) => (
               <button
                 key={item.id}
@@ -477,25 +521,40 @@ function App() {
               </button>
             ))}
           </div>
+          <div className="segmented locale-switch" aria-label={t(locale, 'controls.language')}>
+            {localeOptions.map((item) => (
+              <button
+                key={item.id}
+                className={locale === item.id ? 'active' : ''}
+                type="button"
+                onClick={() => changeLocale(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
           <button
             className="icon-button"
             type="button"
-            aria-label="Toggle theme"
+            aria-label={t(locale, 'controls.toggleTheme')}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           >
-            {theme === 'dark' ? 'Light' : 'Dark'}
+            {theme === 'dark' ? t(locale, 'theme.light') : t(locale, 'theme.dark')}
           </button>
         </div>
       </header>
 
       <main className="workbench">
-        <section className="drill-panel" aria-label="Practice drill">
+        <section className="drill-panel" aria-label={t(locale, 'panel.practiceDrill')}>
           <div className="metric-strip">
-            <Metric label={mode === 'timed' ? 'Time' : 'Done'} value={mode === 'timed' ? `${timeLeft}s` : `${completedPrompts}/${targetCount}`} />
-            <Metric label="Streak" value={session.stats.streak.toString()} />
-            <Metric label="Accuracy" value={`${accuracy}%`} />
-            <Metric label="SPM" value={spm.toFixed(1)} />
-            <Metric label="Best" value={progress.bestStreak.toString()} />
+            <Metric
+              label={mode === 'timed' ? t(locale, 'metric.time') : t(locale, 'metric.done')}
+              value={mode === 'timed' ? `${timeLeft}s` : `${completedPrompts}/${targetCount}`}
+            />
+            <Metric label={t(locale, 'metric.streak')} value={session.stats.streak.toString()} />
+            <Metric label={t(locale, 'metric.accuracy')} value={`${accuracy}%`} />
+            <Metric label={t(locale, 'metric.spm')} value={spm.toFixed(1)} />
+            <Metric label={t(locale, 'metric.best')} value={progress.bestStreak.toString()} />
           </div>
 
           <div
@@ -506,30 +565,38 @@ function App() {
             onClick={() => captureRef.current?.focus()}
           >
             {session.status === 'finished' && session.summary ? (
-              <Summary summary={session.summary} />
+              <Summary summary={session.summary} locale={locale} />
             ) : (
               <>
                 <div className="prompt-meta">
                   <span>
                     {activeShortcut
-                      ? `${specialtyLabel(shortcutSpecialty(activeShortcut))} · ${categoryLabel(activeShortcut.category)}`
-                      : 'Library'}
+                      ? `${specialtyName(locale, shortcutSpecialty(activeShortcut))} · ${categoryName(locale, activeShortcut.category)}`
+                      : t(locale, 'label.library')}
                   </span>
                   {activeShortcut?.capture === 'simulated' ? (
-                    <span className="simulation-pill">browser-safe</span>
+                    <span className="simulation-pill">{t(locale, 'label.browserSafe')}</span>
                   ) : null}
                 </div>
-                <h1>{activeShortcut?.action ?? 'No shortcut loaded'}</h1>
+                <h1>
+                  {activeShortcut
+                    ? shortcutAction(locale, activeShortcut.action)
+                    : t(locale, 'label.noShortcutLoaded')}
+                </h1>
                 {activeShortcut ? (
-                  <ComboRail shortcut={activeShortcut} platform={platform} />
+                  <ComboRail shortcut={activeShortcut} platform={platform} locale={locale} />
                 ) : null}
                 <div className="input-readout">
-                  <span className="readout-label">Input</span>
+                  <span className="readout-label">{t(locale, 'label.input')}</span>
                   <div className="pressed-combo">
                     {session.feedback.combo ? (
-                      <KeySequence sequence={session.feedback.combo} platform={platform} />
+                      <KeySequence
+                        sequence={session.feedback.combo}
+                        platform={platform}
+                        locale={locale}
+                      />
                     ) : (
-                      <span className="ghost-combo">Waiting for combo</span>
+                      <span className="ghost-combo">{t(locale, 'label.waitingForCombo')}</span>
                     )}
                   </div>
                 </div>
@@ -539,11 +606,11 @@ function App() {
                 </div>
                 {activeShortcut?.note ? (
                   <p className="limit-note">
-                    Real shortcut:{' '}
+                    {t(locale, 'label.realShortcut')}:{' '}
                     {activeShortcut.realKeys
                       ? formatCombo(activeShortcut.realKeys, platform).join(' + ')
                       : formatCombo(activeShortcut.keys, platform).join(' + ')}
-                    . {activeShortcut.note}
+                    . {shortcutNote(locale, activeShortcut.note)}
                   </p>
                 ) : null}
               </>
@@ -556,36 +623,38 @@ function App() {
               type="button"
               onClick={session.status === 'running' ? finishSession : startSession}
             >
-              {session.status === 'running' ? 'End session' : 'Start drill'}
+              {session.status === 'running'
+                ? t(locale, 'action.endSession')
+                : t(locale, 'action.startDrill')}
             </button>
             <button
               type="button"
               disabled={session.status !== 'running'}
               onClick={() => applyOutcome('skipped')}
             >
-              Skip
+              {t(locale, 'action.skip')}
             </button>
             <div className="active-history">
-              <span>Current lifetime</span>
+              <span>{t(locale, 'label.currentLifetime')}</span>
               <strong>
-                {activeAccuracy === null ? 'fresh' : `${activeAccuracy}%`}
+                {activeAccuracy === null ? t(locale, 'label.fresh') : `${activeAccuracy}%`}
               </strong>
             </div>
           </div>
         </section>
 
-        <aside className="setup-panel" aria-label="Practice setup">
-          <ControlGroup title="Mode">
+        <aside className="setup-panel" aria-label={t(locale, 'panel.practiceSetup')}>
+          <ControlGroup title={t(locale, 'control.mode')}>
             <div className="mode-grid">
-              <ModeButton current={mode} mode="timed" label="Timed" setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="fixed" label="Fixed count" setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="category" label="Category" setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="specialty" label="Specialty" setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="weak" label="Weak review" setMode={setMode} disabled={!canEditSettings} />
+              <ModeButton current={mode} mode="timed" label={modeName(locale, 'timed')} setMode={setMode} disabled={!canEditSettings} />
+              <ModeButton current={mode} mode="fixed" label={modeName(locale, 'fixed')} setMode={setMode} disabled={!canEditSettings} />
+              <ModeButton current={mode} mode="category" label={modeName(locale, 'category')} setMode={setMode} disabled={!canEditSettings} />
+              <ModeButton current={mode} mode="specialty" label={modeName(locale, 'specialty')} setMode={setMode} disabled={!canEditSettings} />
+              <ModeButton current={mode} mode="weak" label={modeName(locale, 'weak')} setMode={setMode} disabled={!canEditSettings} />
             </div>
           </ControlGroup>
 
-          <ControlGroup title={mode === 'timed' ? 'Timer' : 'Count'}>
+          <ControlGroup title={mode === 'timed' ? t(locale, 'control.timer') : t(locale, 'control.count')}>
             {mode === 'timed' ? (
               <div className="segmented full">
                 {durations.map((seconds) => (
@@ -617,7 +686,7 @@ function App() {
             )}
           </ControlGroup>
 
-          <ControlGroup title="Category">
+          <ControlGroup title={t(locale, 'control.category')}>
             <select
               disabled={!canEditSettings || mode !== 'category'}
               value={selectedCategory}
@@ -627,13 +696,13 @@ function App() {
             >
               {categories.map((category) => (
                 <option key={category.id} value={category.id}>
-                  {category.label}
+                  {categoryName(locale, category.id)}
                 </option>
               ))}
             </select>
           </ControlGroup>
 
-          <ControlGroup title="Specialty">
+          <ControlGroup title={t(locale, 'control.specialty')}>
             <select
               disabled={!canEditSettings || mode !== 'specialty'}
               value={selectedSpecialty}
@@ -643,32 +712,32 @@ function App() {
             >
               {specialties.map((specialty) => (
                 <option key={specialty.id} value={specialty.id}>
-                  {specialty.label}
+                  {specialtyName(locale, specialty.id)}
                 </option>
               ))}
             </select>
           </ControlGroup>
 
           <div className="pool-meter">
-            <span>Queue</span>
+            <span>{t(locale, 'control.queue')}</span>
             <strong>{practicePool.length}</strong>
           </div>
           <div className="pool-meter">
-            <span>Best score</span>
+            <span>{t(locale, 'control.bestScore')}</span>
             <strong>{progress.bestScore}</strong>
           </div>
         </aside>
       </main>
 
-      <section className="progress-grid" aria-label="Progress and library">
-        <ProgressPanel title="Weak shortcuts">
+      <section className="progress-grid" aria-label={t(locale, 'panel.progressAndLibrary')}>
+        <ProgressPanel title={t(locale, 'panel.weakShortcuts')}>
           {weakShortcuts.length === 0 ? (
-            <p className="empty-state">No weak shortcuts yet.</p>
+            <p className="empty-state">{t(locale, 'empty.noWeak')}</p>
           ) : (
             <ul className="compact-list">
               {weakShortcuts.slice(0, 6).map((shortcut) => (
                 <li key={shortcut.id}>
-                  <span>{shortcut.action}</span>
+                  <span>{shortcutAction(locale, shortcut.action)}</span>
                   <strong>
                     {getShortcutAccuracy(progress.shortcutStats[shortcut.id]) ?? 0}%
                   </strong>
@@ -678,36 +747,42 @@ function App() {
           )}
         </ProgressPanel>
 
-        <ProgressPanel title="Recent sessions">
+        <ProgressPanel title={t(locale, 'panel.recentSessions')}>
           {progress.recentSessions.length === 0 ? (
-            <p className="empty-state">Sessions will land here.</p>
+            <p className="empty-state">{t(locale, 'empty.sessions')}</p>
           ) : (
             <ul className="compact-list">
               {progress.recentSessions.slice(0, 5).map((record) => (
                 <li key={record.id}>
                   <span>
-                    {record.correct} correct / {record.accuracy}%
+                    {recentSessionDetail(locale, record.correct, record.accuracy)}
                   </span>
-                  <strong>{record.spm.toFixed(1)} SPM</strong>
+                  <strong>
+                    {record.spm.toFixed(1)} {t(locale, 'metric.spm')}
+                  </strong>
                 </li>
               ))}
             </ul>
           )}
         </ProgressPanel>
 
-        <ProgressPanel title="Shortcut library">
+        <ProgressPanel title={t(locale, 'panel.shortcutLibrary')}>
           <div className="library-list">
             {shortcuts.map((shortcut) => (
               <div key={shortcut.id} className="library-row">
                 <div>
-                  <span>{shortcut.action}</span>
+                  <span>{shortcutAction(locale, shortcut.action)}</span>
                   <small>
-                    {specialtyLabel(shortcutSpecialty(shortcut))} /{' '}
-                    {categoryLabel(shortcut.category)}
+                    {specialtyName(locale, shortcutSpecialty(shortcut))} /{' '}
+                    {categoryName(locale, shortcut.category)}
                   </small>
                 </div>
                 <div className="library-combo">
-                  <KeySequence sequence={shortcutSequence(shortcut)} platform={platform} />
+                  <KeySequence
+                    sequence={shortcutSequence(shortcut)}
+                    platform={platform}
+                    locale={locale}
+                  />
                   <strong>
                     {getShortcutAccuracy(progress.shortcutStats[shortcut.id]) ??
                       '--'}
@@ -790,16 +865,16 @@ function ProgressPanel({
   )
 }
 
-function Summary({ summary }: { summary: SessionRecord }) {
+function Summary({ summary, locale }: { summary: SessionRecord; locale: Locale }) {
   return (
     <div className="summary">
-      <span className="eyebrow">Session summary</span>
+      <span className="eyebrow">{t(locale, 'summary.title')}</span>
       <h1>{summary.score}</h1>
       <div className="summary-grid">
-        <Metric label="Correct" value={summary.correct.toString()} />
-        <Metric label="Accuracy" value={`${summary.accuracy}%`} />
-        <Metric label="SPM" value={summary.spm.toFixed(1)} />
-        <Metric label="Best streak" value={summary.bestStreak.toString()} />
+        <Metric label={t(locale, 'metric.correct')} value={summary.correct.toString()} />
+        <Metric label={t(locale, 'metric.accuracy')} value={`${summary.accuracy}%`} />
+        <Metric label={t(locale, 'metric.spm')} value={summary.spm.toFixed(1)} />
+        <Metric label={t(locale, 'metric.bestStreak')} value={summary.bestStreak.toString()} />
       </div>
     </div>
   )
@@ -808,16 +883,24 @@ function Summary({ summary }: { summary: SessionRecord }) {
 function ComboRail({
   shortcut,
   platform,
+  locale,
 }: {
   shortcut: Shortcut
   platform: Platform
+  locale: Locale
 }) {
   return (
     <div className="combo-rail">
       <span className="readout-label">
-        {shortcut.capture === 'simulated' ? 'Drill combo' : 'Target combo'}
+        {shortcut.capture === 'simulated'
+          ? t(locale, 'label.drillCombo')
+          : t(locale, 'label.targetCombo')}
       </span>
-      <KeySequence sequence={shortcutSequence(shortcut)} platform={platform} />
+      <KeySequence
+        sequence={shortcutSequence(shortcut)}
+        platform={platform}
+        locale={locale}
+      />
     </div>
   )
 }
@@ -825,21 +908,25 @@ function ComboRail({
 function KeySequence({
   sequence,
   platform,
+  locale,
 }: {
   sequence: KeyCombo[]
   platform: Platform
+  locale: Locale
 }) {
   return (
     <span
       className="key-sequence"
-      aria-label={formatSequence(sequence, platform)}
+      aria-label={formatSequence(sequence, platform, locale)}
     >
       {sequence.map((combo, index) => (
         <span
           key={`${comboSignature(combo, platform)}-${index}`}
           className="sequence-step"
         >
-          {index > 0 ? <span className="sequence-arrow">then</span> : null}
+          {index > 0 ? (
+            <span className="sequence-arrow">{t(locale, 'sequence.then')}</span>
+          ) : null}
           <Keycaps combo={combo} platform={platform} />
         </span>
       ))}
@@ -890,13 +977,14 @@ function createFeedback(
   shortcut: Shortcut,
   pressed: KeyCombo[] | undefined,
   platform: Platform,
+  locale: Locale,
 ): Feedback {
-  const target = formatSequence(shortcutSequence(shortcut), platform)
+  const target = formatSequence(shortcutSequence(shortcut), platform, locale)
   if (outcome === 'correct') {
     return {
       kind: 'correct',
-      title: 'Correct',
-      detail: `${shortcut.action} locked in.`,
+      title: t(locale, 'feedback.correctTitle'),
+      detail: `${shortcutAction(locale, shortcut.action)} ${t(locale, 'feedback.correctDetail')}`,
       combo: pressed,
     }
   }
@@ -904,8 +992,8 @@ function createFeedback(
   if (outcome === 'close') {
     return {
       kind: 'close',
-      title: 'Close',
-      detail: 'Right key, wrong modifier set.',
+      title: t(locale, 'feedback.closeTitle'),
+      detail: t(locale, 'feedback.closeDetail'),
       combo: pressed,
     }
   }
@@ -913,15 +1001,15 @@ function createFeedback(
   if (outcome === 'skipped') {
     return {
       kind: 'skipped',
-      title: 'Skipped',
-      detail: `${target} was the target.`,
+      title: t(locale, 'feedback.skippedTitle'),
+      detail: targetWasDetail(locale, target),
     }
   }
 
   return {
     kind: 'wrong',
-    title: 'Wrong key',
-    detail: `${target} was expected.`,
+    title: t(locale, 'feedback.wrongTitle'),
+    detail: targetExpectedDetail(locale, target),
     combo: pressed,
   }
 }
@@ -961,10 +1049,10 @@ function sequenceStartsWith(
   )
 }
 
-function formatSequence(sequence: KeyCombo[], platform: Platform) {
+function formatSequence(sequence: KeyCombo[], platform: Platform, locale: Locale) {
   return sequence
     .map((combo) => formatCombo(combo, platform).join(' + '))
-    .join(' then ')
+    .join(` ${t(locale, 'sequence.then')} `)
 }
 
 function calculateAccuracy(stats: SessionStats) {

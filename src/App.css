@@ -99,6 +99,10 @@
   width: 100%;
 }
 
+.locale-switch {
+  grid-auto-columns: minmax(44px, 1fr);
+}
+
 button,
 select {
   font: inherit;

@@ -1,5 +1,7 @@
 # Shortcutype
 
+[English](README.md) | [简体中文](docs/README.zh-CN.md)
+
 **Build shortcut reflexes like you build typing speed.**
 
 Shortcutype is a fast, keyboard-first trainer for developer shortcuts across macOS, Windows, tmux, Vim, Emacs, VS Code, browser DevTools, shell workflows, and Git muscle memory.
@@ -22,6 +24,7 @@ It shows one action at a time, listens for the real key combination, gives immed
 - **Immediate feedback**: correct, wrong key, close-but-wrong modifier, skipped, and partial sequence states.
 - **Progress that sticks**: recent sessions, per-shortcut accuracy, weak shortcuts, best streak, and best score are saved locally.
 - **Browser-safe capture**: OS-owned shortcuts use safe simulated drill combos while still showing the real shortcut.
+- **Built-in i18n**: switch between English and Simplified Chinese, with the app remembering your preference.
 - **Focused interface**: dense stats, large prompt, clear key visualization, dark/light themes, no landing-page fluff.
 
 ## Practice modes
