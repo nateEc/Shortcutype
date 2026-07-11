@@ -28,6 +28,11 @@ describe('keyboard-first practice flow', () => {
   })
 
   it('pauses into the Esc command palette and resumes with focus state restored', () => {
+    localStorage.setItem('shortcutype-settings-v2', JSON.stringify({
+      version: 2, platform: 'mac', mode: 'specialty', category: 'editor', specialty: 'tmux',
+      duration: 60, count: 10, theme: 'dark', locale: 'en', learning: 'recall',
+      includeSystemCards: false, motion: true, sound: false,
+    }))
     const { container } = render(<App />)
     fireEvent.keyDown(window, { key: 'Enter', code: 'Enter' })
     fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
