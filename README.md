@@ -93,6 +93,6 @@ Core input parsing, sequence matching, adaptive scheduling, onboarding transitio
 
 ## Visual verification
 
-Browser-reviewed states live in [`docs/screenshots`](docs/screenshots): ready, focused running, partial sequence, error, command palette, results, light theme, and mobile.
+Browser-reviewed states live in [`docs/screenshots`](docs/screenshots): ready, focused running, partial sequence, error, command palette, results, light theme, and mobile. The [`onboarding` set](docs/screenshots/onboarding) records the first-run explanation, Teach, Imitate, Recall, error comparison, tool selection, personalized ready screen, and mobile ready screen.
 
 Shortcutype is inspired by the focus and immediacy of excellent typing tools, but its interaction model, visual system, Chord Trace, scheduling, and implementation are original.
