@@ -211,6 +211,7 @@ const modeLabels = {
 } satisfies Record<Locale, Record<SessionMode, string>>
 
 const actionLabelsZh: Record<string, string> = {
+  'Copy': '复制',
   'Switch app': '切换应用',
   'Open system search': '打开系统搜索',
   'Open app settings': '打开应用设置',

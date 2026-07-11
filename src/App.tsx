@@ -36,6 +36,19 @@ import {
   type SpecialtyId,
 } from './shortcuts'
 import { getCopy } from './ui-copy'
+import {
+  advanceOnboarding,
+  completeOnboarding,
+  loadOnboarding,
+  saveOnboarding,
+  shouldAutoStartOnboarding,
+  skipOnboarding,
+  startOnboarding,
+  toolToSpecialty,
+  type ToolId,
+} from './onboarding'
+import { OnboardingExperience } from './components/OnboardingExperience'
+import { ReadyHome } from './components/ReadyHome'
 
 type Panel = 'settings' | 'library' | 'history' | null
 type Phase = 'ready' | 'running' | 'paused' | 'finished'
@@ -74,7 +87,7 @@ type DrillSession = {
   summary?: SessionRecord
 }
 
-const durations = [30, 60, 120]
+const durations = [30, 60, 120, 300]
 const counts = [10, 25, 50]
 
 const emptyStats = (): SessionStats => ({
@@ -85,6 +98,10 @@ const emptyStats = (): SessionStats => ({
 function App() {
   const [settings, setSettings] = useState(loadSettings)
   const [progress, setProgress] = useState<ProgressState>(loadProgress)
+  const [onboarding, setOnboarding] = useState(loadOnboarding)
+  const [onboardingActive, setOnboardingActive] = useState(() =>
+    shouldAutoStartOnboarding(loadOnboarding(), loadProgress()),
+  )
   const [panel, setPanel] = useState<Panel>(null)
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandQuery, setCommandQuery] = useState('')
@@ -169,6 +186,7 @@ function App() {
     { label: copy.history, keywords: 'history results sessions', action: () => openPanel('history') },
     { label: `${copy.theme}: ${settings.theme === 'dark' ? copy.light : copy.dark}`, keywords: 'theme light dark', action: toggleTheme },
     { label: `${settings.learning === 'recall' ? copy.learn : copy.recall} · ${copy.learningLabel}`, keywords: 'learn recall answer', action: toggleLearning },
+    { label: copy.replayIntro, keywords: 'onboarding tutorial introduction replay help', action: replayOnboarding },
     { label: copy.again, keywords: 'restart again repeat', action: startSession },
     { label: copy.end, keywords: 'finish end stop', action: finishSession },
   ]
@@ -206,6 +224,7 @@ function App() {
         return
       }
       if (editing) return
+      if (onboardingActive) return
 
       const currentStep = ['wrong', 'close'].includes(session.feedback.kind) ? 0 : session.sequenceBuffer.length
       const reservedIsAnswer = session.phase === 'running' && active
@@ -261,10 +280,15 @@ function App() {
     beginSession(retryPool?.length ? retryPool : basePool)
   }
 
-  function beginSession(pool: Shortcut[]) {
+  function beginSession(
+    pool: Shortcut[],
+    overrides?: { mode?: SessionMode; count?: number; duration?: number },
+  ) {
     if (!pool.length) return
     const seed = Date.now()
-    const size = settings.mode === 'timed' ? Math.max(100, pool.length * 2) : settings.count
+    const mode = overrides?.mode ?? settings.mode
+    const count = overrides?.count ?? settings.count
+    const size = mode === 'timed' ? Math.max(100, pool.length * 2) : count
     setNow(seed)
     setSession({
       phase: 'running', queue: buildAdaptiveQueue(pool, progress.shortcutStats, size, seed),
@@ -441,13 +465,66 @@ function App() {
     if (pool.length) { setRetryPool(pool); beginSession(pool) }
   }
 
+  function replayOnboarding() {
+    const next = saveOnboarding(startOnboarding(onboarding))
+    setOnboarding(next)
+    setOnboardingActive(true)
+    setSession((current) => ({ ...current, phase: 'ready', queue: [], index: 0 }))
+    setCommandOpen(false)
+    setPanel(null)
+  }
+
+  function advanceIntroduction() {
+    setOnboarding((current) => {
+      const next = saveOnboarding(advanceOnboarding(current.status === 'new' ? startOnboarding(current) : current))
+      return next
+    })
+  }
+
+  function skipIntroduction() {
+    const next = saveOnboarding(skipOnboarding(onboarding))
+    setOnboarding(next)
+    setOnboardingActive(false)
+  }
+
+  function finishIntroduction(tools: ToolId[]) {
+    const next = saveOnboarding(completeOnboarding(onboarding, tools))
+    setOnboarding(next)
+    setOnboardingActive(false)
+    startToolPractice(tools.find((tool) => tool !== 'general') ?? 'general')
+  }
+
+  function startToolPractice(tool: ToolId) {
+    const specialty = toolToSpecialty(tool)
+    const pool = shortcuts.filter(
+      (shortcut) => shortcut.capture === 'native' && shortcutSpecialty(shortcut) === specialty,
+    )
+    setSettings((current) => ({ ...current, mode: 'specialty', specialty, count: 10, learning: 'recall' }))
+    beginSession(pool.length ? pool : shortcuts.filter((shortcut) => shortcut.capture === 'native'), {
+      mode: 'fixed', count: 10,
+    })
+  }
+
+  function startWarmup() {
+    const pool = shortcuts.filter((shortcut) => shortcut.capture === 'native')
+    setSettings((current) => ({ ...current, mode: 'timed', duration: 300, learning: 'recall' }))
+    beginSession(pool, { mode: 'timed', duration: 300 })
+  }
+
+  function startWeakReview() {
+    const pool = shortcuts.filter((shortcut) => weakIds.has(shortcut.id) && shortcut.capture === 'native')
+    if (!pool.length) return
+    setSettings((current) => ({ ...current, mode: 'weak', count: 10, learning: 'recall' }))
+    beginSession(pool, { mode: 'fixed', count: 10 })
+  }
+
   const reasonLabel = activeScheduled
     ? ({ new: copy.reasonNew, weak: copy.reasonWeak, due: copy.reasonDue, coverage: copy.reasonCoverage } as const)[activeScheduled.reason]
     : copy.reasonCoverage
   const revealVisible = settings.learning === 'learn' || session.revealed || active?.capture === 'simulated'
 
   return (
-    <div className={`app phase-${session.phase}`}>
+    <div className={`app phase-${session.phase} ${onboardingActive ? 'onboarding-active' : ''}`}>
       <a className="skip-link" href="#practice-stage">{copy.skipToPractice}</a>
       <header className="masthead" aria-hidden={session.phase === 'running' ? 'true' : undefined}>
         <button className="brand" type="button" onClick={() => setSession((value) => ({ ...value, phase: 'ready' }))}>
@@ -461,15 +538,39 @@ function App() {
         </nav>
       </header>
 
-      <main className="practice-shell">
-        {session.phase === 'finished' && session.summary ? (
+      <main id="practice-stage" className="practice-shell">
+        {onboardingActive ? (
+          <OnboardingExperience
+            state={onboarding}
+            locale={settings.locale}
+            platform={settings.platform}
+            motion={settings.motion}
+            paused={commandOpen || panel !== null}
+            onAdvance={advanceIntroduction}
+            onSkip={skipIntroduction}
+            onComplete={finishIntroduction}
+            onOpenCommand={openCommand}
+          />
+        ) : session.phase === 'finished' && session.summary ? (
           <Results
             summary={session.summary} locale={settings.locale} shortcuts={shortcuts}
             onRestart={startSession} onMistakes={practiceMistakes} restartArmed={restartArmed}
           />
+        ) : session.phase === 'ready' ? (
+          <ReadyHome
+            locale={settings.locale}
+            platform={settings.platform}
+            selectedTools={onboarding.selectedTools}
+            hasWeak={weakIds.size > 0}
+            onContinue={startSession}
+            onWarmup={startWarmup}
+            onWeak={startWeakReview}
+            onTool={startToolPractice}
+            onAdvanced={() => setPanel('settings')}
+          />
         ) : (
           <section
-            id="practice-stage" ref={stageRef} tabIndex={-1}
+            ref={stageRef} tabIndex={-1}
             className={`practice-stage feedback-${session.feedback.kind}`}
             aria-label="Shortcut practice"
           >
@@ -508,14 +609,6 @@ function App() {
               ) : null}
             </div>
 
-            {session.phase === 'ready' ? (
-              <div className="ready-actions">
-                <button className="start-action" type="button" onClick={startSession}>{copy.startButton}<kbd>Enter</kbd></button>
-                <button className="config-summary" type="button" onClick={() => setPanel('settings')}>
-                  {sessionLabel(settings, copy)} <span>{copy.edit}</span>
-                </button>
-              </div>
-            ) : null}
           </section>
         )}
       </main>
@@ -558,7 +651,7 @@ function App() {
               <button autoFocus type="button" onClick={closePanel} aria-label={copy.close}>×</button>
             </div>
             {panel === 'settings' ? (
-              <SettingsPanel settings={settings} update={updateSetting} copy={copy} />
+              <SettingsPanel settings={settings} update={updateSetting} copy={copy} onReplay={replayOnboarding} />
             ) : panel === 'library' ? (
               <LibraryPanel shortcuts={shortcuts} locale={settings.locale} platform={settings.platform} query={libraryQuery} setQuery={setLibraryQuery} />
             ) : (
@@ -669,10 +762,11 @@ function ResultMetric({ value, label }: { value: ReactNode; label: string }) {
   return <div><strong>{value}</strong><span>{label}</span></div>
 }
 
-function SettingsPanel({ settings, update, copy }: {
+function SettingsPanel({ settings, update, copy, onReplay }: {
   settings: AppSettings
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   copy: ReturnType<typeof getCopy>
+  onReplay: () => void
 }) {
   return (
     <div className="settings-groups">
@@ -705,6 +799,9 @@ function SettingsPanel({ settings, update, copy }: {
       <SettingGroup label={copy.language}><ChoiceRow items={localeOptions.map((item) => ({ value: item.id, label: item.label }))} value={settings.locale} onChange={(value) => update('locale', value as Locale)} /></SettingGroup>
       <SettingGroup label={copy.motion}><Toggle value={settings.motion} onChange={(value) => update('motion', value)} copy={copy} /></SettingGroup>
       <SettingGroup label={copy.sound}><Toggle value={settings.sound} onChange={(value) => update('sound', value)} copy={copy} /></SettingGroup>
+      <SettingGroup label={copy.introEyebrow}>
+        <button className="drawer-secondary-action" type="button" onClick={onReplay}>{copy.replayIntro}</button>
+      </SettingGroup>
     </div>
   )
 }
@@ -755,11 +852,6 @@ function HistoryPanel({ progress, locale }: { progress: ProgressState; locale: L
 
 function formatSequence(sequence: KeyCombo[], platform: Platform) {
   return sequence.map((combo) => formatCombo(combo, platform).join(' + ')).join('  →  ')
-}
-
-function sessionLabel(settings: AppSettings, copy: ReturnType<typeof getCopy>) {
-  const mode = settings.mode === 'timed' ? `${settings.duration}s` : settings.mode === 'fixed' ? `${settings.count}` : settings.mode === 'weak' ? copy.weak : settings.mode === 'category' ? copy.category : copy.specialty
-  return `${settings.learning === 'recall' ? copy.recall : copy.learn} · ${mode} · ${settings.platform === 'mac' ? 'macOS' : 'Windows'}`
 }
 
 function outcomeLabel(copy: ReturnType<typeof getCopy>, outcome: ShortcutOutcome) {
