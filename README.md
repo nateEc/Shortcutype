@@ -2,110 +2,84 @@
 
 [English](README.md) | [简体中文](docs/README.zh-CN.md)
 
-**Build shortcut reflexes like you build typing speed.**
+**Turn commands into reflexes.**
 
-Shortcutype is a fast, keyboard-first trainer for developer shortcuts across macOS, Windows, tmux, Vim, Emacs, VS Code, browser DevTools, shell workflows, and Git muscle memory.
+Shortcutype is a keyboard-first recall trainer for developer shortcuts. It presents the action, hides the answer, captures the real chord, and immediately schedules the next useful recall. It is local-only: no account, backend, analytics, or telemetry.
 
-If you have ever bookmarked a shortcut cheat sheet and still reached for the mouse five minutes later, this is for you.
+![Shortcutype ready state](docs/screenshots/ready.png)
 
-![Shortcutype preview](docs/preview.png)
+## The practice loop
 
-## Why Shortcutype?
+Shortcutype is intentionally not a shortcut cheat sheet. In the default **Recall** mode, the target combo stays hidden. Your input appears on the Chord Trace as a short signal path, and mistakes identify whether the main key or modifier set was wrong.
 
-Most shortcut tools are static cheat sheets. Shortcutype is a drill surface.
+- Press `Enter` to start from the ready screen.
+- Press the shown shortcut to answer; multi-step chords are accepted one step at a time.
+- Press `F1` to reveal the answer. Revealed answers are marked assisted and are not scored.
+- Press `Ctrl + →` to skip.
+- Press `Esc` or `Ctrl/Cmd + Shift + P` for the command palette. Time pauses while it is open.
+- From results, press `Enter` to repeat or `Tab`, then `Enter`, for a deliberate quick restart.
 
-It shows one action at a time, listens for the real key combination, gives immediate feedback, and keeps the rhythm moving. Think Monkeytype, but for the commands developers actually use all day.
+The entire start → practice → pause/configure → finish → review → restart path is keyboard accessible.
 
-## Highlights
+## Modes and practice sets
 
-- **Real practice loop**: timed sessions, fixed-count drills, category drills, specialty drills, and weak-shortcut review.
-- **Developer-first shortcut sets**: macOS, Windows, shell/readline, tmux, Vim, Emacs, VS Code, DevTools, Git, Finder/File Explorer, and system navigation.
-- **Multi-step sequence support**: train commands like `Ctrl+B then C`, `D then D`, `G then G`, and `Ctrl+X then Ctrl+S`.
-- **Immediate feedback**: correct, wrong key, close-but-wrong modifier, skipped, and partial sequence states.
-- **Progress that sticks**: recent sessions, per-shortcut accuracy, weak shortcuts, best streak, and best score are saved locally.
-- **Browser-safe capture**: OS-owned shortcuts use safe simulated drill combos while still showing the real shortcut.
-- **Built-in i18n**: switch between English and Simplified Chinese, with the app remembering your preference.
-- **Focused interface**: dense stats, large prompt, clear key visualization, dark/light themes, no landing-page fluff.
+- Fixed sessions: 10, 25, or 50 recalls.
+- Timed sessions: 30, 60, or 120 seconds.
+- Category practice: system, text, terminal, browser/devtools, editor, files, or workflow.
+- Specialty practice: Core OS, Readline, tmux, Vim, Emacs, VS Code, DevTools, or Git.
+- Weak review: shortcuts below 80% accuracy after at least two scored attempts.
+- Learn mode: keeps the target visible for familiarization before switching to Recall.
 
-## Practice modes
+The adaptive scheduler weights new, weak, and overdue shortcuts while preventing immediate repeats. The small reason label above each prompt explains why it appeared.
 
-| Mode | Use it for |
-| --- | --- |
-| Timed | Build rhythm in 30s, 60s, or 120s bursts |
-| Fixed count | Finish a clean set of 15, 25, or 50 prompts |
-| Category | Drill a surface like Terminal, DevTools, or Editor/IDE |
-| Specialty | Go deep on tmux, Vim, Emacs, VS Code, Git, and more |
-| Weak review | Revisit shortcuts your hands keep missing |
+## Honest browser limits
 
-## Specialty packs
+Some shortcuts belong to the operating system, including macOS `Cmd + Tab`, `Cmd + Space`, and Windows `Alt + Tab`. A browser cannot reliably capture them.
 
-Shortcutype ships with realistic seed sets for:
+Shortcutype excludes these shortcuts by default. You can include them as **unscored system cards**: the app shows the real shortcut, asks you to rehearse it outside the browser, and uses `Enter` only as confirmation. Safe proxy combinations are never counted as real muscle-memory practice.
 
-- Core OS navigation
-- Shell / Readline
-- tmux
-- Vim
-- Emacs
-- VS Code
-- Browser DevTools
-- Git workflow
+## Results and local progress
 
-The data is intentionally simple to extend. Add shortcuts in `src/shortcuts.ts` instead of wiring new conditionals into the app.
+The result screen includes scored accuracy, recall rate, best streak, duration, an accuracy-over-time rhythm chart, and per-attempt review. Missed, close, skipped, and revealed prompts can be retried as a focused set.
 
-```ts
-{
-  action: 'tmux: new window',
-  keys: combo(['control'], 'b'),
-  sequence: [combo(['control'], 'b'), combo([], 'c')],
-}
+Progress is stored in `localStorage` under:
+
+```text
+shortcutype-progress-v2
+shortcutype-settings-v2
 ```
 
-## Quick start
+Existing `shortcutype-progress-v1` and `shortcutype-settings-v1` data is migrated automatically. Invalid local data falls back safely without breaking the app.
+
+## Accessibility and display
+
+- English and Simplified Chinese.
+- Dark and light themes.
+- Visible keyboard focus and semantic dialogs/controls.
+- Non-color text feedback for correct, wrong, close, skipped, and assisted states.
+- `prefers-reduced-motion` support plus an in-app motion toggle.
+- Desktop-first practice; mobile remains useful for browsing shortcuts and results and explains the physical-keyboard requirement.
+
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open:
-
-```text
-http://127.0.0.1:5173/
-```
-
-## Quality checks
+Quality gates:
 
 ```bash
+npm test
 npm run lint
 npm run build
 npm audit --audit-level=moderate
 ```
 
-## Local-first progress
+Core input parsing, sequence matching, adaptive scheduling, v1→v2 migration, timing boundaries, command-palette behavior, and keyboard session transitions are covered by Vitest and Testing Library.
 
-Shortcutype stores progress in browser `localStorage` under:
+## Visual verification
 
-```text
-shortcutype-progress-v1
-```
+Browser-reviewed states live in [`docs/screenshots`](docs/screenshots): ready, focused running, partial sequence, error, command palette, results, light theme, and mobile.
 
-No account, no backend, no telemetry pipeline. Just drills and your local progress.
-
-## Browser capture limits
-
-Some operating-system shortcuts cannot be reliably captured by a web page. Examples include macOS `Cmd + Tab`, macOS `Cmd + Space`, and Windows `Alt + Tab`.
-
-For those shortcuts, Shortcutype stores the real combo and uses a browser-safe drill combo so the session does not break or hijack your OS.
-
-## Roadmap ideas
-
-- Import/export shortcut packs
-- User-created packs
-- Daily streaks
-- GitHub Pages demo
-- Chord timing metrics for multi-step shortcuts
-- Optional sound and haptics
-
-## Star it
-
-If Shortcutype helps your hands get faster, a star helps other developers find it.
+Shortcutype is inspired by the focus and immediacy of excellent typing tools, but its interaction model, visual system, Chord Trace, scheduling, and implementation are original.
