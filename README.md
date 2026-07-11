@@ -8,6 +8,18 @@ Shortcutype is a keyboard-first recall trainer for developer shortcuts. It prese
 
 ![Shortcutype ready state](docs/screenshots/ready.png)
 
+## Your first minute
+
+The first run explains the whole product in one sentence: **the action is the question; the shortcut is your answer**. A short, platform-correct tutorial then moves through three steps:
+
+1. **Teach:** press a visible Copy shortcut.
+2. **Imitate:** repeat the same input pattern for Find in file.
+3. **Recall:** answer Copy again with the shortcut hidden.
+
+Choose the tools you use—such as VS Code, Vim, Git, or DevTools—and Shortcutype immediately starts a relevant 10-card practice set. You can skip the introduction, replay it from Practice setup or the command palette, and existing users with saved activity are never forced through it.
+
+After onboarding, the ready screen asks what you want to accomplish instead of exposing configuration first: continue, run a five-minute warmup, review weak shortcuts, or practice a selected tool. Advanced setup remains one action away.
+
 ## The practice loop
 
 Shortcutype is intentionally not a shortcut cheat sheet. In the default **Recall** mode, the target combo stays hidden. Your input appears on the Chord Trace as a short signal path, and mistakes identify whether the main key or modifier set was wrong.
@@ -24,7 +36,7 @@ The entire start → practice → pause/configure → finish → review → rest
 ## Modes and practice sets
 
 - Fixed sessions: 10, 25, or 50 recalls.
-- Timed sessions: 30, 60, or 120 seconds.
+- Timed sessions: 30, 60, 120, or 300 seconds.
 - Category practice: system, text, terminal, browser/devtools, editor, files, or workflow.
 - Specialty practice: Core OS, Readline, tmux, Vim, Emacs, VS Code, DevTools, or Git.
 - Weak review: shortcuts below 80% accuracy after at least two scored attempts.
@@ -47,6 +59,7 @@ Progress is stored in `localStorage` under:
 ```text
 shortcutype-progress-v2
 shortcutype-settings-v2
+shortcutype-onboarding-v1
 ```
 
 Existing `shortcutype-progress-v1` and `shortcutype-settings-v1` data is migrated automatically. Invalid local data falls back safely without breaking the app.
@@ -76,7 +89,7 @@ npm run build
 npm audit --audit-level=moderate
 ```
 
-Core input parsing, sequence matching, adaptive scheduling, v1→v2 migration, timing boundaries, command-palette behavior, and keyboard session transitions are covered by Vitest and Testing Library.
+Core input parsing, sequence matching, adaptive scheduling, onboarding transitions, platform-correct tutorial chords, v1→v2 migration, timing boundaries, command-palette behavior, and keyboard session transitions are covered by Vitest and Testing Library.
 
 ## Visual verification
 
