@@ -1,0 +1,68 @@
+import type { Locale } from './i18n'
+
+const en = {
+  tagline: 'Turn commands into reflexes.', start: 'Press Enter to begin',
+  startButton: 'Begin practice', commandHint: 'Esc commands', revealHint: 'F1 reveal',
+  skipHint: 'Ctrl + → skip', recall: 'Recall', learn: 'Learn', settings: 'Practice setup',
+  library: 'Shortcut library', history: 'History', theme: 'Theme', language: 'Language',
+  platform: 'Platform', mode: 'Session', pack: 'Practice set', length: 'Length',
+  systemCards: 'System-owned shortcuts', systemCardsOff: 'Excluded (recommended)',
+  systemCardsOn: 'Include as unscored cards', close: 'Close', apply: 'Done',
+  search: 'Search commands…', commands: 'Command palette', noCommands: 'No matching command',
+  time: 'time', progress: 'progress', accuracy: 'accuracy', streak: 'streak',
+  correct: 'Locked in', wrong: 'Wrong key', closeCall: 'Check modifiers',
+  partial: 'Sequence accepted', skipped: 'Skipped', revealed: 'Answer revealed — unscored',
+  reasonNew: 'New shortcut', reasonWeak: 'Back because it was difficult',
+  reasonDue: 'Due for recall', reasonCoverage: 'Balanced coverage',
+  target: 'Target', yourInput: 'Your input', realShortcut: 'Real shortcut',
+  unsupportedTitle: 'Practice outside the browser',
+  unsupportedBody: 'This shortcut belongs to the operating system. Rehearse the real keys, then confirm. This card never affects accuracy.',
+  confirmRehearsed: 'Press Enter when rehearsed', finished: 'Practice complete',
+  finishedBody: 'The useful part is what comes back next.', again: 'Practice again',
+  mistakes: 'Practice misses', review: 'Attempt review', rhythm: 'Recall rhythm',
+  noMistakes: 'No misses in this session.', assisted: 'assisted', unscored: 'unscored',
+  tabRestart: 'Tab then Enter to restart', emptyWeak: 'No weak shortcuts yet. Use all shortcuts for this round.',
+  mobile: 'Connect a physical keyboard to practice. Browsing and results still work here.',
+  motion: 'Motion', sound: 'Sound', on: 'On', off: 'Off', dark: 'Dark', light: 'Light',
+  timed: 'Timed', fixed: 'Fixed', category: 'Category', specialty: 'Specialty', weak: 'Weak review',
+  all: 'All shortcuts', sessionHistory: 'Recent sessions', noHistory: 'No sessions yet.',
+  clearSearch: 'Clear search', paused: 'Paused', resume: 'Resume practice', end: 'End session',
+  modifierError: 'The main key is right. Adjust the modifiers.', keyError: 'That is a different key.',
+  skipToPractice: 'Skip to practice', edit: 'edit', learningLabel: 'Learning',
+  recallsPerMinute: 'recalls / min', signalsToRevisit: 'signals to revisit',
+  recallUnit: 'recalls', localOnly: 'local only',
+}
+
+const zh: typeof en = {
+  tagline: '把命令练成下意识。', start: '按 Enter 开始', startButton: '开始训练',
+  commandHint: 'Esc 命令', revealHint: 'F1 显示答案', skipHint: 'Ctrl + → 跳过',
+  recall: '回忆', learn: '学习', settings: '训练设置', library: '快捷键库', history: '训练历史',
+  theme: '主题', language: '语言', platform: '平台', mode: '本轮模式', pack: '训练范围', length: '长度',
+  systemCards: '系统占用快捷键', systemCardsOff: '排除（推荐）', systemCardsOn: '作为不计分卡片加入',
+  close: '关闭', apply: '完成', search: '搜索命令…', commands: '命令面板', noCommands: '没有匹配命令',
+  time: '时间', progress: '进度', accuracy: '准确率', streak: '连续', correct: '已记住',
+  wrong: '按键错误', closeCall: '检查修饰键', partial: '序列已接受', skipped: '已跳过',
+  revealed: '已显示答案 · 不计分', reasonNew: '新快捷键', reasonWeak: '因为上次较难再次出现',
+  reasonDue: '到了复习时间', reasonCoverage: '均衡覆盖', target: '目标', yourInput: '你的输入',
+  realShortcut: '真实快捷键', unsupportedTitle: '请在浏览器外练习',
+  unsupportedBody: '这个快捷键由操作系统接管。请实际按下真实组合，然后确认。本卡片永远不影响准确率。',
+  confirmRehearsed: '练习后按 Enter 确认', finished: '本轮完成',
+  finishedBody: '真正有用的是下一次还能想起来。', again: '再练一轮', mistakes: '只练错题',
+  review: '逐题回顾', rhythm: '回忆节奏', noMistakes: '本轮没有错题。', assisted: '看过答案',
+  unscored: '不计分', tabRestart: '按 Tab → Enter 快速重开',
+  emptyWeak: '目前没有弱项，本轮将使用全部快捷键。',
+  mobile: '连接实体键盘后即可训练；手机端仍可浏览资料与结果。', motion: '动效', sound: '声音',
+  on: '开', off: '关', dark: '深色', light: '浅色', timed: '限时', fixed: '固定数量',
+  category: '分类', specialty: '专项', weak: '弱项复习', all: '全部快捷键',
+  sessionHistory: '最近训练', noHistory: '还没有训练记录。', clearSearch: '清除搜索',
+  paused: '已暂停', resume: '继续训练', end: '结束本轮',
+  modifierError: '主键正确，请调整修饰键。', keyError: '按下了不同的主键。',
+  skipToPractice: '跳到训练区', edit: '编辑', learningLabel: '学习方式',
+  recallsPerMinute: '每分钟回忆', signalsToRevisit: '个需要复习的信号',
+  recallUnit: '次回忆', localOnly: '仅本地',
+}
+
+export type Copy = typeof en
+export function getCopy(locale: Locale): Copy {
+  return locale === 'zh-CN' ? zh : en
+}
