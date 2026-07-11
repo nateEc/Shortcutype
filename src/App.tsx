@@ -2,30 +2,32 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import './App.css'
 import {
   categoryName,
-  detectLocale,
   localeOptions,
-  modeName,
-  normalizeLocale,
-  recentSessionDetail,
-  sequenceAcceptedDetail,
-  sessionCompleteDetail,
   shortcutAction,
-  shortcutNote,
   specialtyName,
-  t,
-  targetExpectedDetail,
-  targetWasDetail,
   type Locale,
 } from './i18n'
+import { comboFromKeyboardEvent, describeMismatch, evaluateSequence, eventMatchesExpectedStep, shortcutPracticePolicy } from './input'
+import {
+  getWeakShortcutIds,
+  loadProgress,
+  recordSession,
+  recordShortcutOutcome,
+  type DrillEvent,
+  type ProgressState,
+  type SessionMode,
+  type SessionRecord,
+  type ShortcutOutcome,
+} from './progress'
+import { buildAdaptiveQueue, type ScheduledShortcut } from './scheduler'
+import { loadSettings, SETTINGS_KEY, type AppSettings, type LearningMode, type Theme } from './settings'
 import {
   categories,
-  comboSignature,
   formatCombo,
   getShortcuts,
   platforms,
   shortcutSequence,
   shortcutSpecialty,
-  sortModifiers,
   specialties,
   type CategoryId,
   type KeyCombo,
@@ -33,25 +35,10 @@ import {
   type Shortcut,
   type SpecialtyId,
 } from './shortcuts'
-import {
-  getShortcutAccuracy,
-  getWeakShortcutIds,
-  loadProgress,
-  recordSession,
-  recordShortcutOutcome,
-  type SessionMode,
-  type SessionRecord,
-  type ShortcutOutcome,
-} from './progress'
+import { getCopy } from './ui-copy'
 
-type FeedbackKind = 'idle' | 'correct' | 'wrong' | 'close' | 'skipped' | 'info'
-
-type Feedback = {
-  kind: FeedbackKind
-  title: string
-  detail: string
-  combo?: KeyCombo[]
-}
+type Panel = 'settings' | 'library' | 'history' | null
+type Phase = 'ready' | 'running' | 'paused' | 'finished'
 
 type SessionStats = {
   attempts: number
@@ -59,1136 +46,756 @@ type SessionStats = {
   wrong: number
   close: number
   skipped: number
+  revealed: number
+  reviewed: number
+  scoredCorrect: number
   streak: number
   bestStreak: number
 }
 
+type Feedback = {
+  kind: 'idle' | 'correct' | 'wrong' | 'close' | 'partial' | 'revealed' | 'skipped'
+  detail: string
+}
+
 type DrillSession = {
-  status: 'idle' | 'running' | 'finished'
-  queue: Shortcut[]
+  phase: Phase
+  queue: ScheduledShortcut[]
   index: number
   startedAt: number | null
   finishedAt: number | null
+  pausedAt: number | null
+  pausedMs: number
   stats: SessionStats
-  feedback: Feedback
   sequenceBuffer: KeyCombo[]
+  events: DrillEvent[]
+  feedback: Feedback
+  revealed: boolean
   summary?: SessionRecord
 }
 
-type Theme = 'dark' | 'light'
-
 const durations = [30, 60, 120]
-const counts = [15, 25, 50]
-const settingsKey = 'shortcutype-settings-v1'
+const counts = [10, 25, 50]
 
-const initialStats = (): SessionStats => ({
-  attempts: 0,
-  correct: 0,
-  wrong: 0,
-  close: 0,
-  skipped: 0,
-  streak: 0,
-  bestStreak: 0,
+const emptyStats = (): SessionStats => ({
+  attempts: 0, correct: 0, wrong: 0, close: 0, skipped: 0,
+  revealed: 0, reviewed: 0, scoredCorrect: 0, streak: 0, bestStreak: 0,
 })
-
-const createEmptyFeedback = (locale: Locale): Feedback => ({
-  kind: 'idle',
-  title: t(locale, 'state.readyTitle'),
-  detail: t(locale, 'state.readyDetail'),
-})
-
-const detectPlatform = (): Platform => {
-  if (typeof navigator === 'undefined') {
-    return 'mac'
-  }
-
-  return navigator.platform.toLowerCase().includes('mac') ? 'mac' : 'windows'
-}
-
-const loadSettings = () => {
-  if (typeof window === 'undefined') {
-    return null
-  }
-
-  try {
-    return JSON.parse(window.localStorage.getItem(settingsKey) ?? 'null') as {
-      platform?: Platform
-      mode?: SessionMode
-      category?: CategoryId
-      specialty?: SpecialtyId
-      duration?: number
-      count?: number
-      theme?: Theme
-      locale?: Locale
-    } | null
-  } catch {
-    return null
-  }
-}
 
 function App() {
-  const savedSettings = useMemo(loadSettings, [])
-  const [platform, setPlatform] = useState<Platform>(
-    savedSettings?.platform ?? detectPlatform(),
-  )
-  const [mode, setMode] = useState<SessionMode>(savedSettings?.mode ?? 'timed')
-  const [selectedCategory, setSelectedCategory] = useState<CategoryId>(
-    savedSettings?.category ?? 'editor',
-  )
-  const [selectedSpecialty, setSelectedSpecialty] = useState<SpecialtyId>(
-    savedSettings?.specialty ?? 'tmux',
-  )
-  const [duration, setDuration] = useState(savedSettings?.duration ?? 60)
-  const [targetCount, setTargetCount] = useState(savedSettings?.count ?? 25)
-  const [theme, setTheme] = useState<Theme>(savedSettings?.theme ?? 'dark')
-  const [locale, setLocale] = useState<Locale>(
-    savedSettings?.locale ? normalizeLocale(savedSettings.locale) : detectLocale(),
-  )
-  const [progress, setProgress] = useState(loadProgress)
+  const [settings, setSettings] = useState(loadSettings)
+  const [progress, setProgress] = useState<ProgressState>(loadProgress)
+  const [panel, setPanel] = useState<Panel>(null)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
+  const [libraryQuery, setLibraryQuery] = useState('')
   const [now, setNow] = useState(Date.now())
-  const captureRef = useRef<HTMLDivElement>(null)
-  const savedSessionIdsRef = useRef(new Set<string>())
+  const [retryPool, setRetryPool] = useState<Shortcut[] | null>(null)
+  const [restartArmed, setRestartArmed] = useState(false)
+  const commandInputRef = useRef<HTMLInputElement>(null)
+  const stageRef = useRef<HTMLElement>(null)
+  const savedSummaryIds = useRef(new Set<string>())
+  const copy = getCopy(settings.locale)
 
   const [session, setSession] = useState<DrillSession>({
-    status: 'idle',
-    queue: [],
-    index: 0,
-    startedAt: null,
-    finishedAt: null,
-    stats: initialStats(),
-    feedback: createEmptyFeedback(locale),
-    sequenceBuffer: [],
+    phase: 'ready', queue: [], index: 0, startedAt: null, finishedAt: null,
+    pausedAt: null, pausedMs: 0, stats: emptyStats(), sequenceBuffer: [], events: [],
+    feedback: { kind: 'idle', detail: '' }, revealed: false,
   })
 
-  const shortcuts = useMemo(() => getShortcuts(platform), [platform])
+  const shortcuts = useMemo(() => getShortcuts(settings.platform), [settings.platform])
   const weakIds = useMemo(() => new Set(getWeakShortcutIds(progress)), [progress])
-  const weakShortcuts = useMemo(
-    () => shortcuts.filter((shortcut) => weakIds.has(shortcut.id)),
-    [shortcuts, weakIds],
-  )
-  const practicePool = useMemo(() => {
-    if (mode === 'category') {
-      return shortcuts.filter((shortcut) => shortcut.category === selectedCategory)
+  const basePool = useMemo(() => {
+    let pool = shortcuts
+    if (settings.mode === 'category') pool = pool.filter((item) => item.category === settings.category)
+    if (settings.mode === 'specialty') pool = pool.filter((item) => shortcutSpecialty(item) === settings.specialty)
+    if (settings.mode === 'weak') {
+      const weak = pool.filter((item) => weakIds.has(item.id))
+      pool = weak.length ? weak : pool
     }
+    return pool.filter((item) => shortcutPracticePolicy(item, settings.includeSystemCards) !== 'excluded')
+  }, [settings, shortcuts, weakIds])
 
-    if (mode === 'weak') {
-      return weakShortcuts
-    }
-
-    if (mode === 'specialty') {
-      return shortcuts.filter(
-        (shortcut) => shortcutSpecialty(shortcut) === selectedSpecialty,
-      )
-    }
-
-    return shortcuts
-  }, [mode, selectedCategory, selectedSpecialty, shortcuts, weakShortcuts])
-
-  const activeShortcut = session.queue[session.index] ?? practicePool[0] ?? shortcuts[0]
-  const elapsedSeconds =
-    session.startedAt === null
-      ? 0
-      : Math.max(
-          0,
-          Math.floor(((session.finishedAt ?? now) - session.startedAt) / 1000),
-        )
-  const timeLeft =
-    mode === 'timed' && session.status === 'running'
-      ? Math.max(0, duration - elapsedSeconds)
-      : duration
-  const completedPrompts = session.stats.correct + session.stats.skipped
-  const accuracy = calculateAccuracy(session.stats)
-  const spm = calculateSpm(session.stats.correct, elapsedSeconds)
-  const canEditSettings = session.status !== 'running'
+  const activeScheduled = session.queue[session.index]
+  const active = activeScheduled?.shortcut ?? basePool[0]
+  const elapsedMs = session.startedAt === null
+    ? 0
+    : Math.max(0, (session.finishedAt ?? session.pausedAt ?? now) - session.startedAt - session.pausedMs)
+  const elapsedSeconds = Math.floor(elapsedMs / 1000)
+  const timeLeft = Math.max(0, settings.duration - elapsedSeconds)
+  const completed = session.stats.correct + session.stats.skipped + session.stats.reviewed
+  const accuracy = session.stats.attempts
+    ? Math.round((session.stats.scoredCorrect / session.stats.attempts) * 100)
+    : 100
 
   useEffect(() => {
-    window.localStorage.setItem(
-      settingsKey,
-      JSON.stringify({
-        platform,
-        mode,
-        category: selectedCategory,
-        specialty: selectedSpecialty,
-        duration,
-        count: targetCount,
-        theme,
-        locale,
-      }),
-    )
-  }, [
-    duration,
-    mode,
-    platform,
-    selectedCategory,
-    selectedSpecialty,
-    targetCount,
-    theme,
-    locale,
-  ])
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+    document.body.dataset.theme = settings.theme
+    document.body.dataset.motion = settings.motion ? 'on' : 'off'
+    document.documentElement.lang = settings.locale
+  }, [settings])
 
   useEffect(() => {
-    document.body.dataset.theme = theme
-  }, [theme])
-
-  useEffect(() => {
-    document.documentElement.lang = locale
-  }, [locale])
-
-  useEffect(() => {
-    if (session.status !== 'running') {
-      return
-    }
-
-    const timer = window.setInterval(() => setNow(Date.now()), 200)
+    if (session.phase !== 'running') return
+    const timer = window.setInterval(() => setNow(Date.now()), 100)
     return () => window.clearInterval(timer)
-  }, [session.status])
+  }, [session.phase])
 
   useEffect(() => {
-    if (session.status === 'running' && mode === 'timed' && timeLeft <= 0) {
+    if (!session.summary || savedSummaryIds.current.has(session.summary.id)) return
+    savedSummaryIds.current.add(session.summary.id)
+    setProgress((value) => recordSession(value, session.summary!))
+  }, [session.summary])
+
+  useEffect(() => {
+    if (session.phase === 'running' && settings.mode === 'timed' && timeLeft <= 0) {
       finishSession()
     }
   })
 
   useEffect(() => {
-    if (!session.summary || savedSessionIdsRef.current.has(session.summary.id)) {
-      return
+    if (commandOpen) {
+      commandInputRef.current?.focus()
+    } else if (session.phase === 'running') {
+      stageRef.current?.focus()
     }
+  }, [commandOpen, session.phase])
 
-    savedSessionIdsRef.current.add(session.summary.id)
-    setProgress((currentProgress) => recordSession(currentProgress, session.summary!))
-  }, [session.summary])
+  const commands = [
+    { label: copy.resume, keywords: 'resume close', action: closeCommand },
+    { label: copy.settings, keywords: 'settings setup config', action: () => openPanel('settings') },
+    { label: copy.library, keywords: 'library shortcuts search', action: () => openPanel('library') },
+    { label: copy.history, keywords: 'history results sessions', action: () => openPanel('history') },
+    { label: `${copy.theme}: ${settings.theme === 'dark' ? copy.light : copy.dark}`, keywords: 'theme light dark', action: toggleTheme },
+    { label: `${settings.learning === 'recall' ? copy.learn : copy.recall} · ${copy.learningLabel}`, keywords: 'learn recall answer', action: toggleLearning },
+    { label: copy.again, keywords: 'restart again repeat', action: startSession },
+    { label: copy.end, keywords: 'finish end stop', action: finishSession },
+  ]
+  const filteredCommands = commands.filter((command) =>
+    `${command.label} ${command.keywords}`.toLowerCase().includes(commandQuery.toLowerCase()),
+  )
 
   useEffect(() => {
-    if (session.status === 'running') {
-      captureRef.current?.focus()
-    }
-  }, [session.index, session.status])
-
-  useEffect(() => {
-    if (session.status !== 'running') {
-      return
-    }
-
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) {
+      if (event.isComposing) return
+      const target = event.target
+      const editing = target instanceof HTMLElement && target.matches('input, select, textarea')
+
+      if (commandOpen) {
+        if (event.key === 'Escape') { event.preventDefault(); closeCommand(); return }
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          cycleModalFocus('.command-palette', event.shiftKey)
+          return
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault(); setCommandIndex((value) => Math.min(filteredCommands.length - 1, value + 1)); return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault(); setCommandIndex((value) => Math.max(0, value - 1)); return
+        }
+        if (event.key === 'Enter' && filteredCommands[commandIndex]) {
+          event.preventDefault(); filteredCommands[commandIndex].action(); return
+        }
+        return
+      }
+      if (panel) {
+        if (event.key === 'Escape') { event.preventDefault(); closePanel(); return }
+        if (event.key === 'Tab') { event.preventDefault(); cycleModalFocus('.drawer', event.shiftKey) }
+        return
+      }
+      if (editing) return
+
+      const currentStep = ['wrong', 'close'].includes(session.feedback.kind) ? 0 : session.sequenceBuffer.length
+      const reservedIsAnswer = session.phase === 'running' && active
+        ? eventMatchesExpectedStep(active, currentStep, event, settings.platform)
+        : false
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p' && !reservedIsAnswer) {
+        event.preventDefault(); openCommand(); return
+      }
+      if (event.key === 'Escape' && !reservedIsAnswer) { event.preventDefault(); openCommand(); return }
+
+      if (session.phase === 'ready') {
+        if (event.key === 'Enter') { event.preventDefault(); startSession(); }
+        return
+      }
+      if (session.phase === 'finished') {
+        if (event.key === 'Tab' && document.activeElement === document.body) {
+          event.preventDefault(); setRestartArmed(true); return
+        }
+        if (event.key === 'Enter') { event.preventDefault(); startSession(); return }
+        return
+      }
+      if (session.phase !== 'running') return
+
+      if (event.repeat) { event.preventDefault(); return }
+      if (event.key === 'F1' && !reservedIsAnswer) { event.preventDefault(); revealAnswer(); return }
+      if (event.ctrlKey && event.key === 'ArrowRight' && !reservedIsAnswer) { event.preventDefault(); applyOutcome('skipped'); return }
+      if (active?.capture === 'simulated') {
         event.preventDefault()
+        if (event.key === 'Enter') applyOutcome('reviewed')
         return
       }
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        applyOutcome('skipped')
-        return
-      }
-
-      const pressed = comboFromKeyboardEvent(event, platform)
-      if (!pressed) {
-        return
-      }
-
+      const combo = comboFromKeyboardEvent(event, settings.platform)
+      if (!combo) return
       event.preventDefault()
-      evaluateCombo(pressed)
+      evaluateCombo(combo)
     }
-
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
   })
 
-  function startSession() {
-    if (practicePool.length === 0) {
-      setSession((current) => ({
-        ...current,
-        status: 'idle',
-        feedback: {
-          kind: 'info',
-          title: t(locale, 'state.weakEmptyTitle'),
-          detail: t(locale, 'state.weakEmptyDetail'),
-        },
-      }))
-      return
+  function updateSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
+    setSettings((current) => ({ ...current, [key]: value }))
+    setRetryPool(null)
+    if (
+      ['platform', 'mode', 'category', 'specialty', 'duration', 'count', 'includeSystemCards'].includes(key) &&
+      (session.phase === 'running' || session.phase === 'paused')
+    ) {
+      setSession((current) => ({ ...current, phase: 'ready', queue: [], index: 0, startedAt: null, pausedAt: null }))
     }
+  }
 
-    const seedSize = mode === 'timed' ? Math.max(80, practicePool.length * 3) : targetCount
-    setNow(Date.now())
+  function startSession() {
+    beginSession(retryPool?.length ? retryPool : basePool)
+  }
+
+  function beginSession(pool: Shortcut[]) {
+    if (!pool.length) return
+    const seed = Date.now()
+    const size = settings.mode === 'timed' ? Math.max(100, pool.length * 2) : settings.count
+    setNow(seed)
     setSession({
-      status: 'running',
-      queue: buildQueue(practicePool, seedSize),
-      index: 0,
-      startedAt: Date.now(),
-      finishedAt: null,
-      stats: initialStats(),
-      sequenceBuffer: [],
-      feedback: {
-        kind: 'info',
-        title: t(locale, 'state.liveTitle'),
-        detail: t(locale, 'state.liveDetail'),
-      },
+      phase: 'running', queue: buildAdaptiveQueue(pool, progress.shortcutStats, size, seed),
+      index: 0, startedAt: seed, finishedAt: null, pausedAt: null, pausedMs: 0,
+      stats: emptyStats(), sequenceBuffer: [], events: [],
+      feedback: { kind: 'idle', detail: '' }, revealed: false,
     })
+    setCommandOpen(false); setPanel(null); setRestartArmed(false)
   }
 
   function finishSession() {
     setSession((current) => {
-      if (current.status !== 'running' || current.startedAt === null) {
-        return current
-      }
-
+      if (!current.startedAt || current.phase === 'finished' || current.phase === 'ready') return current
       const finishedAt = Date.now()
-      const summary = createSessionRecord(
-        current.stats,
-        current.startedAt,
-        finishedAt,
-        platform,
-        mode,
-        mode === 'category' ? selectedCategory : undefined,
-        mode === 'specialty' ? selectedSpecialty : undefined,
-      )
-
-      return {
-        ...current,
-        status: 'finished',
-        finishedAt,
-        summary,
-        feedback: {
-          kind: 'info',
-          title: t(locale, 'state.sessionCompleteTitle'),
-          detail: sessionCompleteDetail(locale, summary.correct, summary.spm),
-        },
+      const durationSec = Math.max(1, Math.round((finishedAt - current.startedAt - current.pausedMs) / 1000))
+      const acc = current.stats.attempts ? Math.round((current.stats.scoredCorrect / current.stats.attempts) * 100) : 100
+      const summary: SessionRecord = {
+        id: `${finishedAt}-${Math.random().toString(36).slice(2, 8)}`, date: finishedAt,
+        platform: settings.platform, mode: settings.mode,
+        category: settings.mode === 'category' ? settings.category : undefined,
+        specialty: settings.mode === 'specialty' ? settings.specialty : undefined,
+        durationSec, correct: current.stats.correct, attempts: current.stats.attempts,
+        wrong: current.stats.wrong, close: current.stats.close, skipped: current.stats.skipped,
+        revealed: current.stats.revealed, accuracy: acc,
+        spm: Number(((current.stats.correct / durationSec) * 60).toFixed(1)),
+        bestStreak: current.stats.bestStreak,
+        score: Math.max(0, current.stats.correct * 100 + current.stats.bestStreak * 12 - current.stats.wrong * 18 - current.stats.close * 8 - current.stats.revealed * 12),
+        events: current.events,
       }
+      return { ...current, phase: 'finished', finishedAt, pausedAt: null, summary }
     })
+    setCommandOpen(false)
   }
 
-  function evaluateCombo(pressed: KeyCombo) {
-    if (!activeShortcut || session.status !== 'running') {
-      return
-    }
-
-    const nextBuffer = [...session.sequenceBuffer, pressed]
-    const expectedSequences = getExpectedSequences(activeShortcut)
-    const exact = expectedSequences.some((expected) =>
-      sequencesEqual(expected, nextBuffer, platform),
-    )
-
-    if (exact) {
-      applyOutcome('correct', nextBuffer)
-      return
-    }
-
-    const partial = expectedSequences.some((expected) =>
-      sequenceStartsWith(expected, nextBuffer, platform),
-    )
-
-    if (partial) {
+  function evaluateCombo(combo: KeyCombo) {
+    if (!active || session.phase !== 'running') return
+    const retained = ['wrong', 'close'].includes(session.feedback.kind) ? [] : session.sequenceBuffer
+    const nextBuffer = [...retained, combo]
+    const verdict = evaluateSequence(active, nextBuffer, settings.platform)
+    if (verdict === 'exact') { applyOutcome('correct', nextBuffer); return }
+    if (verdict === 'partial') {
       setSession((current) => ({
-        ...current,
-        sequenceBuffer: nextBuffer,
-        feedback: {
-          kind: 'info',
-          title: t(locale, 'state.sequenceTitle'),
-          detail: sequenceAcceptedDetail(
-            locale,
-            nextBuffer.length,
-            expectedSequences[0].length,
-          ),
-          combo: nextBuffer,
-        },
+        ...current, sequenceBuffer: nextBuffer,
+        feedback: { kind: 'partial', detail: `${nextBuffer.length}/${shortcutSequence(active).length}` },
       }))
       return
     }
-
-    const stepIndex = Math.max(0, nextBuffer.length - 1)
-    const sameKey = expectedSequences.some(
-      (expected) => expected[stepIndex]?.key === pressed.key,
-    )
-
-    applyOutcome(sameKey ? 'close' : 'wrong', nextBuffer)
+    const mismatch = describeMismatch(active, combo, settings.platform)
+    applyOutcome(verdict, nextBuffer, mismatch === 'modifiers' ? copy.modifierError : copy.keyError)
   }
 
-  function applyOutcome(outcome: ShortcutOutcome, pressed?: KeyCombo[]) {
-    if (!activeShortcut || session.status !== 'running') {
-      return
+  function revealAnswer() {
+    if (!active || session.revealed || session.phase !== 'running') return
+    setProgress((value) => recordShortcutOutcome(value, active.id, 'revealed'))
+    setSession((current) => ({
+      ...current, revealed: true, stats: { ...current.stats, revealed: current.stats.revealed + 1 },
+      events: [...current.events, makeEvent(active, activeScheduled, 'revealed', current, undefined)],
+      feedback: { kind: 'revealed', detail: copy.revealed },
+    }))
+  }
+
+  function applyOutcome(outcome: ShortcutOutcome, pressed?: KeyCombo[], detail?: string) {
+    if (!active || session.phase !== 'running') return
+    if (outcome !== 'reviewed' && !(outcome === 'correct' && session.revealed)) {
+      setProgress((value) => recordShortcutOutcome(value, active.id, outcome))
     }
-
-    setProgress((current) =>
-      recordShortcutOutcome(current, activeShortcut.id, outcome),
-    )
-
+    playFeedback(outcome, settings.sound)
     setSession((current) => {
-      if (current.status !== 'running') {
-        return current
-      }
-
-      const nextStats = updateStats(current.stats, outcome)
-      const feedback = createFeedback(
-        outcome,
-        activeShortcut,
-        pressed,
-        platform,
-        locale,
-      )
+      if (current.phase !== 'running') return current
+      const assisted = current.revealed
+      const scoredAttempt = ['correct', 'wrong', 'close'].includes(outcome) && !(outcome === 'correct' && assisted)
+      const stats = { ...current.stats }
+      if (scoredAttempt) stats.attempts += 1
+      if (outcome === 'correct') stats.correct += 1
+      if (outcome === 'correct' && !assisted) stats.scoredCorrect += 1
+      if (outcome === 'wrong') stats.wrong += 1
+      if (outcome === 'close') stats.close += 1
+      if (outcome === 'skipped') stats.skipped += 1
+      if (outcome === 'reviewed') stats.reviewed += 1
+      stats.streak = outcome === 'correct' && !assisted ? stats.streak + 1 : ['wrong', 'close'].includes(outcome) ? 0 : stats.streak
+      stats.bestStreak = Math.max(stats.bestStreak, stats.streak)
+      const event = makeEvent(active, activeScheduled, outcome, current, pressed)
+      const events = [...current.events, event]
 
       if (outcome === 'wrong' || outcome === 'close') {
         return {
-          ...current,
-          stats: nextStats,
-          sequenceBuffer: [],
-          feedback,
+          ...current, stats, sequenceBuffer: pressed ?? [], events,
+          feedback: { kind: outcome, detail: detail ?? '' },
         }
       }
-
-      const completed = nextStats.correct + nextStats.skipped
-      if (mode !== 'timed' && completed >= targetCount) {
+      const done = stats.correct + stats.skipped + stats.reviewed
+      const shouldFinish = settings.mode !== 'timed' && done >= settings.count
+      if (shouldFinish) {
         const finishedAt = Date.now()
-        const summary = createSessionRecord(
-          nextStats,
-          current.startedAt ?? finishedAt,
-          finishedAt,
-          platform,
-          mode,
-          mode === 'category' ? selectedCategory : undefined,
-          mode === 'specialty' ? selectedSpecialty : undefined,
-        )
-
-        return {
-          ...current,
-          status: 'finished',
-          finishedAt,
-          stats: nextStats,
-          sequenceBuffer: [],
-          feedback: {
-            kind: 'info',
-            title: t(locale, 'state.sessionCompleteTitle'),
-            detail: sessionCompleteDetail(locale, summary.correct, summary.spm),
-          },
-          summary,
+        const durationSec = Math.max(1, Math.round((finishedAt - (current.startedAt ?? finishedAt) - current.pausedMs) / 1000))
+        const acc = stats.attempts ? Math.round((stats.scoredCorrect / stats.attempts) * 100) : 100
+        const summary: SessionRecord = {
+          id: `${finishedAt}-${Math.random().toString(36).slice(2, 8)}`, date: finishedAt,
+          platform: settings.platform, mode: settings.mode,
+          category: settings.mode === 'category' ? settings.category : undefined,
+          specialty: settings.mode === 'specialty' ? settings.specialty : undefined,
+          durationSec, correct: stats.correct, attempts: stats.attempts, wrong: stats.wrong,
+          close: stats.close, skipped: stats.skipped, revealed: stats.revealed,
+          accuracy: acc, spm: Number(((stats.correct / durationSec) * 60).toFixed(1)),
+          bestStreak: stats.bestStreak, score: Math.max(0, stats.correct * 100 - stats.wrong * 18 - stats.close * 8),
+          events,
         }
+        return { ...current, phase: 'finished', finishedAt, stats, events, summary, sequenceBuffer: [], revealed: false }
       }
 
+      let queue = current.queue
       const nextIndex = current.index + 1
-      const queue =
-        nextIndex >= current.queue.length - 2
-          ? [
-              ...current.queue,
-              ...buildQueue(
-                practicePool,
-                Math.max(targetCount, practicePool.length),
-              ),
-            ]
-          : current.queue
-
+      if (nextIndex >= queue.length - 2) {
+        const pool = retryPool?.length ? retryPool : basePool
+        queue = [...queue, ...buildAdaptiveQueue(pool, progress.shortcutStats, Math.max(20, pool.length), Date.now())]
+      }
       return {
-        ...current,
-        queue,
-        index: nextIndex,
-        stats: nextStats,
-        sequenceBuffer: [],
-        feedback,
+        ...current, queue, index: nextIndex, stats, events, sequenceBuffer: [], revealed: false,
+        feedback: { kind: outcome === 'skipped' ? 'skipped' : 'correct', detail: outcome === 'skipped' ? copy.skipped : copy.correct },
       }
     })
   }
 
-  function changeLocale(nextLocale: Locale) {
-    setLocale(nextLocale)
-    setSession((current) =>
-      current.status === 'idle'
-        ? { ...current, feedback: createEmptyFeedback(nextLocale) }
-        : current,
-    )
+  function makeEvent(
+    shortcut: Shortcut,
+    scheduled: ScheduledShortcut | undefined,
+    outcome: ShortcutOutcome,
+    current: DrillSession,
+    pressed?: KeyCombo[],
+  ): DrillEvent {
+    return {
+      atMs: Math.max(0, Date.now() - (current.startedAt ?? Date.now()) - current.pausedMs),
+      shortcutId: shortcut.id, action: shortcut.action, outcome,
+      reason: scheduled?.reason ?? 'coverage', pressed, revealed: current.revealed,
+    }
   }
 
-  const progressForActive = activeShortcut
-    ? progress.shortcutStats[activeShortcut.id]
-    : undefined
-  const activeAccuracy = getShortcutAccuracy(progressForActive)
+  function openCommand() {
+    setCommandQuery(''); setCommandIndex(0); setCommandOpen(true)
+    setSession((current) => current.phase === 'running'
+      ? { ...current, phase: 'paused', pausedAt: Date.now() }
+      : current)
+  }
+
+  function closeCommand() {
+    setCommandOpen(false)
+    setSession((current) => current.phase === 'paused'
+      ? { ...current, phase: 'running', pausedMs: current.pausedMs + (Date.now() - (current.pausedAt ?? Date.now())), pausedAt: null }
+      : current)
+  }
+
+  function openPanel(next: Exclude<Panel, null>) {
+    setCommandOpen(false); setPanel(next)
+  }
+
+  function closePanel() {
+    setPanel(null)
+    if (session.phase === 'paused') closeCommand()
+  }
+
+  function toggleTheme() {
+    updateSetting('theme', settings.theme === 'dark' ? 'light' : 'dark')
+    closeCommand()
+  }
+
+  function toggleLearning() {
+    updateSetting('learning', settings.learning === 'recall' ? 'learn' : 'recall')
+    closeCommand()
+  }
+
+  function practiceMistakes() {
+    const ids = new Set(session.events.filter((event) => ['wrong', 'close', 'skipped', 'revealed'].includes(event.outcome)).map((event) => event.shortcutId))
+    const pool = shortcuts.filter((item) => ids.has(item.id))
+    if (pool.length) { setRetryPool(pool); beginSession(pool) }
+  }
+
+  const reasonLabel = activeScheduled
+    ? ({ new: copy.reasonNew, weak: copy.reasonWeak, due: copy.reasonDue, coverage: copy.reasonCoverage } as const)[activeScheduled.reason]
+    : copy.reasonCoverage
+  const revealVisible = settings.learning === 'learn' || session.revealed || active?.capture === 'simulated'
 
   return (
-    <div className={`app-shell theme-${theme}`}>
-      <header className="topbar">
-        <div className="brand-block">
-          <span className="eyebrow">Shortcutype</span>
-          <strong>{t(locale, 'brand.subtitle')}</strong>
-        </div>
-        <div className="top-actions" aria-label={t(locale, 'global.controls')}>
-          <div className="segmented" aria-label={t(locale, 'controls.platform')}>
-            {platforms.map((item) => (
-              <button
-                key={item.id}
-                className={platform === item.id ? 'active' : ''}
-                disabled={!canEditSettings}
-                type="button"
-                onClick={() => setPlatform(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <div className="segmented locale-switch" aria-label={t(locale, 'controls.language')}>
-            {localeOptions.map((item) => (
-              <button
-                key={item.id}
-                className={locale === item.id ? 'active' : ''}
-                type="button"
-                onClick={() => changeLocale(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={t(locale, 'controls.toggleTheme')}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            {theme === 'dark' ? t(locale, 'theme.light') : t(locale, 'theme.dark')}
-          </button>
-        </div>
+    <div className={`app phase-${session.phase}`}>
+      <a className="skip-link" href="#practice-stage">{copy.skipToPractice}</a>
+      <header className="masthead" aria-hidden={session.phase === 'running' ? 'true' : undefined}>
+        <button className="brand" type="button" onClick={() => setSession((value) => ({ ...value, phase: 'ready' }))}>
+          <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
+          <span>shortcutype</span>
+        </button>
+        <nav className="utility-nav" aria-label="Application">
+          <button type="button" onClick={() => setPanel('library')}>{copy.library}</button>
+          <button type="button" onClick={() => setPanel('history')}>{copy.history}</button>
+          <button type="button" onClick={() => setPanel('settings')} aria-label={copy.settings}>⌘</button>
+        </nav>
       </header>
 
-      <main className="workbench">
-        <section className="drill-panel" aria-label={t(locale, 'panel.practiceDrill')}>
-          <div className="metric-strip">
-            <Metric
-              label={mode === 'timed' ? t(locale, 'metric.time') : t(locale, 'metric.done')}
-              value={mode === 'timed' ? `${timeLeft}s` : `${completedPrompts}/${targetCount}`}
-            />
-            <Metric label={t(locale, 'metric.streak')} value={session.stats.streak.toString()} />
-            <Metric label={t(locale, 'metric.accuracy')} value={`${accuracy}%`} />
-            <Metric label={t(locale, 'metric.spm')} value={spm.toFixed(1)} />
-            <Metric label={t(locale, 'metric.best')} value={progress.bestStreak.toString()} />
-          </div>
-
-          <div
-            ref={captureRef}
-            className={`capture-pad feedback-${session.feedback.kind}`}
-            tabIndex={0}
-            aria-live="polite"
-            onClick={() => captureRef.current?.focus()}
+      <main className="practice-shell">
+        {session.phase === 'finished' && session.summary ? (
+          <Results
+            summary={session.summary} locale={settings.locale} shortcuts={shortcuts}
+            onRestart={startSession} onMistakes={practiceMistakes} restartArmed={restartArmed}
+          />
+        ) : (
+          <section
+            id="practice-stage" ref={stageRef} tabIndex={-1}
+            className={`practice-stage feedback-${session.feedback.kind}`}
+            aria-label="Shortcut practice"
           >
-            {session.status === 'finished' && session.summary ? (
-              <Summary summary={session.summary} locale={locale} />
-            ) : (
-              <>
-                <div className="prompt-meta">
-                  <span>
-                    {activeShortcut
-                      ? `${specialtyName(locale, shortcutSpecialty(activeShortcut))} · ${categoryName(locale, activeShortcut.category)}`
-                      : t(locale, 'label.library')}
-                  </span>
-                  {activeShortcut?.capture === 'simulated' ? (
-                    <span className="simulation-pill">{t(locale, 'label.browserSafe')}</span>
-                  ) : null}
-                </div>
-                <h1>
-                  {activeShortcut
-                    ? shortcutAction(locale, activeShortcut.action)
-                    : t(locale, 'label.noShortcutLoaded')}
-                </h1>
-                {activeShortcut ? (
-                  <ComboRail shortcut={activeShortcut} platform={platform} locale={locale} />
-                ) : null}
-                <div className="input-readout">
-                  <span className="readout-label">{t(locale, 'label.input')}</span>
-                  <div className="pressed-combo">
-                    {session.feedback.combo ? (
-                      <KeySequence
-                        sequence={session.feedback.combo}
-                        platform={platform}
-                        locale={locale}
-                      />
-                    ) : (
-                      <span className="ghost-combo">{t(locale, 'label.waitingForCombo')}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="feedback-line">
-                  <strong>{session.feedback.title}</strong>
-                  <span>{session.feedback.detail}</span>
-                </div>
-                {activeShortcut?.note ? (
-                  <p className="limit-note">
-                    {t(locale, 'label.realShortcut')}:{' '}
-                    {activeShortcut.realKeys
-                      ? formatCombo(activeShortcut.realKeys, platform).join(' + ')
-                      : formatCombo(activeShortcut.keys, platform).join(' + ')}
-                    . {shortcutNote(locale, activeShortcut.note)}
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
-
-          <div className="drill-actions">
-            <button
-              className="primary-action"
-              type="button"
-              onClick={session.status === 'running' ? finishSession : startSession}
-            >
-              {session.status === 'running'
-                ? t(locale, 'action.endSession')
-                : t(locale, 'action.startDrill')}
-            </button>
-            <button
-              type="button"
-              disabled={session.status !== 'running'}
-              onClick={() => applyOutcome('skipped')}
-            >
-              {t(locale, 'action.skip')}
-            </button>
-            <div className="active-history">
-              <span>{t(locale, 'label.currentLifetime')}</span>
-              <strong>
-                {activeAccuracy === null ? t(locale, 'label.fresh') : `${activeAccuracy}%`}
-              </strong>
+            <div className="stage-hud" aria-live="off">
+              <span>{settings.mode === 'timed' ? `${timeLeft}s` : `${Math.min(completed, settings.count)} / ${settings.count}`}</span>
+              <span className="hud-center">{settings.learning === 'recall' ? copy.recall : copy.learn} · {settings.platform === 'mac' ? 'macOS' : 'Windows'}</span>
+              <span>{accuracy}%</span>
             </div>
-          </div>
-        </section>
 
-        <aside className="setup-panel" aria-label={t(locale, 'panel.practiceSetup')}>
-          <ControlGroup title={t(locale, 'control.mode')}>
-            <div className="mode-grid">
-              <ModeButton current={mode} mode="timed" label={modeName(locale, 'timed')} setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="fixed" label={modeName(locale, 'fixed')} setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="category" label={modeName(locale, 'category')} setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="specialty" label={modeName(locale, 'specialty')} setMode={setMode} disabled={!canEditSettings} />
-              <ModeButton current={mode} mode="weak" label={modeName(locale, 'weak')} setMode={setMode} disabled={!canEditSettings} />
+            <div className="prompt-block">
+              <p className="prompt-context">
+                {active ? `${specialtyName(settings.locale, shortcutSpecialty(active))} / ${categoryName(settings.locale, active.category)}` : copy.all}
+                {session.phase === 'running' ? <em>{reasonLabel}</em> : null}
+              </p>
+              <h1>{active ? shortcutAction(settings.locale, active.action) : copy.tagline}</h1>
+              {active?.capture === 'simulated' && session.phase === 'running' ? (
+                <div className="system-card-note">
+                  <strong>{copy.unsupportedTitle}</strong><span>{copy.unsupportedBody}</span>
+                </div>
+              ) : null}
             </div>
-          </ControlGroup>
 
-          <ControlGroup title={mode === 'timed' ? t(locale, 'control.timer') : t(locale, 'control.count')}>
-            {mode === 'timed' ? (
-              <div className="segmented full">
-                {durations.map((seconds) => (
-                  <button
-                    key={seconds}
-                    className={duration === seconds ? 'active' : ''}
-                    disabled={!canEditSettings}
-                    type="button"
-                    onClick={() => setDuration(seconds)}
-                  >
-                    {seconds}s
-                  </button>
-                ))}
+            <ChordTrace
+              sequence={revealVisible && active ? (active.realKeys ? [active.realKeys] : shortcutSequence(active)) : session.sequenceBuffer}
+              platform={settings.platform}
+              concealed={!revealVisible && session.sequenceBuffer.length === 0}
+              status={session.feedback.kind}
+              label={revealVisible ? copy.target : copy.yourInput}
+            />
+
+            <div className="stage-feedback" aria-live="polite" aria-atomic="true">
+              {session.phase === 'paused' ? <strong>{copy.paused}</strong> : null}
+              {session.phase === 'running' && session.feedback.detail ? <strong>{session.feedback.detail}</strong> : null}
+              {session.phase === 'running' && !session.feedback.detail ? (
+                <span>{active?.capture === 'simulated' ? copy.confirmRehearsed : `${copy.revealHint} · ${copy.skipHint}`}</span>
+              ) : null}
+            </div>
+
+            {session.phase === 'ready' ? (
+              <div className="ready-actions">
+                <button className="start-action" type="button" onClick={startSession}>{copy.startButton}<kbd>Enter</kbd></button>
+                <button className="config-summary" type="button" onClick={() => setPanel('settings')}>
+                  {sessionLabel(settings, copy)} <span>{copy.edit}</span>
+                </button>
               </div>
-            ) : (
-              <div className="segmented full">
-                {counts.map((count) => (
-                  <button
-                    key={count}
-                    className={targetCount === count ? 'active' : ''}
-                    disabled={!canEditSettings}
-                    type="button"
-                    onClick={() => setTargetCount(count)}
-                  >
-                    {count}
-                  </button>
-                ))}
-              </div>
-            )}
-          </ControlGroup>
-
-          <ControlGroup title={t(locale, 'control.category')}>
-            <select
-              disabled={!canEditSettings || mode !== 'category'}
-              value={selectedCategory}
-              onChange={(event) =>
-                setSelectedCategory(event.target.value as CategoryId)
-              }
-            >
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {categoryName(locale, category.id)}
-                </option>
-              ))}
-            </select>
-          </ControlGroup>
-
-          <ControlGroup title={t(locale, 'control.specialty')}>
-            <select
-              disabled={!canEditSettings || mode !== 'specialty'}
-              value={selectedSpecialty}
-              onChange={(event) =>
-                setSelectedSpecialty(event.target.value as SpecialtyId)
-              }
-            >
-              {specialties.map((specialty) => (
-                <option key={specialty.id} value={specialty.id}>
-                  {specialtyName(locale, specialty.id)}
-                </option>
-              ))}
-            </select>
-          </ControlGroup>
-
-          <div className="pool-meter">
-            <span>{t(locale, 'control.queue')}</span>
-            <strong>{practicePool.length}</strong>
-          </div>
-          <div className="pool-meter">
-            <span>{t(locale, 'control.bestScore')}</span>
-            <strong>{progress.bestScore}</strong>
-          </div>
-        </aside>
+            ) : null}
+          </section>
+        )}
       </main>
 
-      <section className="progress-grid" aria-label={t(locale, 'panel.progressAndLibrary')}>
-        <ProgressPanel title={t(locale, 'panel.weakShortcuts')}>
-          {weakShortcuts.length === 0 ? (
-            <p className="empty-state">{t(locale, 'empty.noWeak')}</p>
-          ) : (
-            <ul className="compact-list">
-              {weakShortcuts.slice(0, 6).map((shortcut) => (
-                <li key={shortcut.id}>
-                  <span>{shortcutAction(locale, shortcut.action)}</span>
-                  <strong>
-                    {getShortcutAccuracy(progress.shortcutStats[shortcut.id]) ?? 0}%
-                  </strong>
-                </li>
-              ))}
-            </ul>
-          )}
-        </ProgressPanel>
+      <footer className="key-footer" aria-hidden={session.phase === 'running' ? 'true' : undefined}>
+        <span>{copy.commandHint}</span><span>{copy.tagline}</span><span>v2 · {copy.localOnly}</span>
+      </footer>
 
-        <ProgressPanel title={t(locale, 'panel.recentSessions')}>
-          {progress.recentSessions.length === 0 ? (
-            <p className="empty-state">{t(locale, 'empty.sessions')}</p>
-          ) : (
-            <ul className="compact-list">
-              {progress.recentSessions.slice(0, 5).map((record) => (
-                <li key={record.id}>
-                  <span>
-                    {recentSessionDetail(locale, record.correct, record.accuracy)}
-                  </span>
-                  <strong>
-                    {record.spm.toFixed(1)} {t(locale, 'metric.spm')}
-                  </strong>
-                </li>
-              ))}
-            </ul>
-          )}
-        </ProgressPanel>
+      {commandOpen ? (
+        <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeCommand()}>
+          <section className="command-palette" role="dialog" aria-modal="true" aria-label={copy.commands}>
+            <div className="command-search">
+              <span aria-hidden="true">›</span>
+              <input
+                ref={commandInputRef} value={commandQuery} placeholder={copy.search}
+                aria-label={copy.search} onChange={(event) => { setCommandQuery(event.target.value); setCommandIndex(0) }}
+              />
+              <kbd>esc</kbd>
+            </div>
+            <div className="command-list" role="listbox">
+              {filteredCommands.length ? filteredCommands.map((command, index) => (
+                <button
+                  key={command.label} type="button" role="option" aria-selected={index === commandIndex}
+                  className={index === commandIndex ? 'selected' : ''}
+                  onMouseEnter={() => setCommandIndex(index)} onClick={command.action}
+                >
+                  <span>{command.label}</span><span aria-hidden="true">↵</span>
+                </button>
+              )) : <p className="empty-message">{copy.noCommands}</p>}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
-        <ProgressPanel title={t(locale, 'panel.shortcutLibrary')}>
-          <div className="library-list">
-            {shortcuts.map((shortcut) => (
-              <div key={shortcut.id} className="library-row">
-                <div>
-                  <span>{shortcutAction(locale, shortcut.action)}</span>
-                  <small>
-                    {specialtyName(locale, shortcutSpecialty(shortcut))} /{' '}
-                    {categoryName(locale, shortcut.category)}
-                  </small>
-                </div>
-                <div className="library-combo">
-                  <KeySequence
-                    sequence={shortcutSequence(shortcut)}
-                    platform={platform}
-                    locale={locale}
-                  />
-                  <strong>
-                    {getShortcutAccuracy(progress.shortcutStats[shortcut.id]) ??
-                      '--'}
-                    {getShortcutAccuracy(progress.shortcutStats[shortcut.id]) ===
-                    null
-                      ? ''
-                      : '%'}
-                  </strong>
-                </div>
-              </div>
-            ))}
+      {panel ? (
+        <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closePanel()}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={panel}>
+            <div className="drawer-head">
+              <div><small>Shortcutype /</small><h2>{panel === 'settings' ? copy.settings : panel === 'library' ? copy.library : copy.history}</h2></div>
+              <button autoFocus type="button" onClick={closePanel} aria-label={copy.close}>×</button>
+            </div>
+            {panel === 'settings' ? (
+              <SettingsPanel settings={settings} update={updateSetting} copy={copy} />
+            ) : panel === 'library' ? (
+              <LibraryPanel shortcuts={shortcuts} locale={settings.locale} platform={settings.platform} query={libraryQuery} setQuery={setLibraryQuery} />
+            ) : (
+              <HistoryPanel progress={progress} locale={settings.locale} />
+            )}
+          </aside>
+        </div>
+      ) : null}
+
+      <div className="mobile-note">{copy.mobile}</div>
+    </div>
+  )
+}
+
+function ChordTrace({
+  sequence, platform, concealed, status, label,
+}: {
+  sequence: KeyCombo[]; platform: Platform; concealed: boolean;
+  status: Feedback['kind']; label: string
+}) {
+  return (
+    <div className={`chord-trace trace-${status} ${concealed ? 'concealed' : ''}`} aria-label={label}>
+      <span className="trace-label">{label}</span>
+      <div className="trace-line" aria-hidden="true" />
+      <div className="trace-nodes">
+        {concealed ? (
+          <><span className="pulse-node" /><span className="pulse-node delayed" /><span className="pulse-node late" /></>
+        ) : sequence.length ? sequence.map((combo, step) => (
+          <div className="trace-step" key={`${step}-${combo.key}`}>
+            {step > 0 ? <span className="step-link">then</span> : null}
+            {formatCombo(combo, platform).map((key) => <kbd key={key}>{key}</kbd>)}
           </div>
-        </ProgressPanel>
-      </section>
-    </div>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  )
-}
-
-function ModeButton({
-  current,
-  mode,
-  label,
-  setMode,
-  disabled,
-}: {
-  current: SessionMode
-  mode: SessionMode
-  label: string
-  setMode: (mode: SessionMode) => void
-  disabled: boolean
-}) {
-  return (
-    <button
-      className={current === mode ? 'active' : ''}
-      disabled={disabled}
-      type="button"
-      onClick={() => setMode(mode)}
-    >
-      {label}
-    </button>
-  )
-}
-
-function ControlGroup({
-  title,
-  children,
-}: {
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="control-group">
-      <h2>{title}</h2>
-      {children}
-    </section>
-  )
-}
-
-function ProgressPanel({
-  title,
-  children,
-}: {
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="progress-panel">
-      <h2>{title}</h2>
-      {children}
-    </section>
-  )
-}
-
-function Summary({ summary, locale }: { summary: SessionRecord; locale: Locale }) {
-  return (
-    <div className="summary">
-      <span className="eyebrow">{t(locale, 'summary.title')}</span>
-      <h1>{summary.score}</h1>
-      <div className="summary-grid">
-        <Metric label={t(locale, 'metric.correct')} value={summary.correct.toString()} />
-        <Metric label={t(locale, 'metric.accuracy')} value={`${summary.accuracy}%`} />
-        <Metric label={t(locale, 'metric.spm')} value={summary.spm.toFixed(1)} />
-        <Metric label={t(locale, 'metric.bestStreak')} value={summary.bestStreak.toString()} />
+        )) : <span className="trace-empty">…</span>}
       </div>
     </div>
   )
 }
 
-function ComboRail({
-  shortcut,
-  platform,
-  locale,
+function Results({
+  summary, locale, shortcuts, onRestart, onMistakes, restartArmed,
 }: {
-  shortcut: Shortcut
-  platform: Platform
-  locale: Locale
+  summary: SessionRecord; locale: Locale; shortcuts: Shortcut[];
+  onRestart: () => void; onMistakes: () => void; restartArmed: boolean
+}) {
+  const copy = getCopy(locale)
+  const misses = summary.events.filter((event) => ['wrong', 'close', 'skipped', 'revealed'].includes(event.outcome))
+  const finalEvents = summary.events.filter((event) => ['correct', 'skipped', 'reviewed'].includes(event.outcome))
+  return (
+    <section className="results" aria-labelledby="results-title">
+      <div className="results-heading">
+        <div><p>{copy.finished}</p><h1 id="results-title">{summary.accuracy}<sup>%</sup></h1><span>{copy.finishedBody}</span></div>
+        <div className="result-actions">
+          <button className="start-action" type="button" onClick={onRestart}>{copy.again}<kbd>Enter</kbd></button>
+          <button type="button" onClick={onMistakes} disabled={!misses.length}>{copy.mistakes}</button>
+        </div>
+      </div>
+      <div className="result-metrics">
+        <ResultMetric value={summary.correct} label={copy.correct} />
+        <ResultMetric value={summary.bestStreak} label={copy.streak} />
+        <ResultMetric value={summary.spm} label={copy.recallsPerMinute} />
+        <ResultMetric value={`${summary.durationSec}s`} label={copy.time} />
+      </div>
+      <div className="rhythm-panel">
+        <div className="section-heading"><h2>{copy.rhythm}</h2><span>{finalEvents.length} {copy.recallUnit}</span></div>
+        <RhythmChart events={summary.events} duration={summary.durationSec * 1000} />
+      </div>
+      <div className="review-panel">
+        <div className="section-heading"><h2>{copy.review}</h2><span>{misses.length ? `${misses.length} ${copy.signalsToRevisit}` : copy.noMistakes}</span></div>
+        <div className="review-list">
+          {summary.events.slice(-12).map((event, index) => {
+            const shortcut = shortcuts.find((item) => item.id === event.shortcutId)
+            return (
+              <div className="review-row" key={`${event.atMs}-${index}`}>
+                <span className={`outcome-dot outcome-${event.outcome}`} aria-label={event.outcome} />
+                <span>{shortcutAction(locale, event.action)}</span>
+                <small>{shortcut ? formatSequence(shortcut.realKeys ? [shortcut.realKeys] : shortcutSequence(shortcut), summary.platform) : ''}</small>
+                <em>{event.revealed ? copy.assisted : outcomeLabel(copy, event.outcome)}</em>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <p className={`restart-tip ${restartArmed ? 'armed' : ''}`}>{restartArmed ? 'Enter' : copy.tabRestart}</p>
+    </section>
+  )
+}
+
+function RhythmChart({ events, duration }: { events: DrillEvent[]; duration: number }) {
+  const scored = events.filter((event) => ['correct', 'wrong', 'close'].includes(event.outcome))
+  const points = scored.map((event, index) => {
+    const x = duration ? Math.min(100, (event.atMs / duration) * 100) : 0
+    const previous = scored.slice(0, index + 1)
+    const correct = previous.filter((item) => item.outcome === 'correct').length
+    return `${x},${100 - (correct / previous.length) * 82}`
+  })
+  return (
+    <svg className="rhythm-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Accuracy over time">
+      <path className="chart-grid" d="M0 20H100 M0 50H100 M0 80H100" />
+      {points.length > 1 ? <polyline points={points.join(' ')} /> : null}
+      {scored.map((event) => (
+        <circle key={`${event.atMs}-${event.outcome}`} cx={duration ? (event.atMs / duration) * 100 : 0} cy={event.outcome === 'correct' ? 18 : 82} r="1.4" className={`chart-${event.outcome}`} />
+      ))}
+    </svg>
+  )
+}
+
+function ResultMetric({ value, label }: { value: ReactNode; label: string }) {
+  return <div><strong>{value}</strong><span>{label}</span></div>
+}
+
+function SettingsPanel({ settings, update, copy }: {
+  settings: AppSettings
+  update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  copy: ReturnType<typeof getCopy>
 }) {
   return (
-    <div className="combo-rail">
-      <span className="readout-label">
-        {shortcut.capture === 'simulated'
-          ? t(locale, 'label.drillCombo')
-          : t(locale, 'label.targetCombo')}
-      </span>
-      <KeySequence
-        sequence={shortcutSequence(shortcut)}
-        platform={platform}
-        locale={locale}
-      />
+    <div className="settings-groups">
+      <SettingGroup label={copy.platform}>
+        <ChoiceRow items={platforms.map((item) => ({ value: item.id, label: item.label }))} value={settings.platform} onChange={(value) => update('platform', value as Platform)} />
+      </SettingGroup>
+      <SettingGroup label={copy.mode}>
+        <ChoiceRow items={[
+          { value: 'fixed', label: copy.fixed }, { value: 'timed', label: copy.timed },
+          { value: 'category', label: copy.category }, { value: 'specialty', label: copy.specialty },
+          { value: 'weak', label: copy.weak },
+        ]} value={settings.mode} onChange={(value) => update('mode', value as SessionMode)} />
+      </SettingGroup>
+      <SettingGroup label={settings.mode === 'timed' ? copy.time : copy.length}>
+        <ChoiceRow items={(settings.mode === 'timed' ? durations : counts).map((value) => ({ value: String(value), label: settings.mode === 'timed' ? `${value}s` : String(value) }))} value={String(settings.mode === 'timed' ? settings.duration : settings.count)} onChange={(value) => settings.mode === 'timed' ? update('duration', Number(value)) : update('count', Number(value))} />
+      </SettingGroup>
+      {settings.mode === 'category' ? (
+        <SettingGroup label={copy.pack}><Select value={settings.category} onChange={(value) => update('category', value as CategoryId)}>{categories.map((item) => <option key={item.id} value={item.id}>{categoryName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
+      ) : null}
+      {settings.mode === 'specialty' ? (
+        <SettingGroup label={copy.pack}><Select value={settings.specialty} onChange={(value) => update('specialty', value as SpecialtyId)}>{specialties.map((item) => <option key={item.id} value={item.id}>{specialtyName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
+      ) : null}
+      <SettingGroup label={copy.learningLabel}>
+        <ChoiceRow items={[{ value: 'recall', label: copy.recall }, { value: 'learn', label: copy.learn }]} value={settings.learning} onChange={(value) => update('learning', value as LearningMode)} />
+      </SettingGroup>
+      <SettingGroup label={copy.systemCards} description={settings.includeSystemCards ? copy.systemCardsOn : copy.systemCardsOff}>
+        <Toggle value={settings.includeSystemCards} onChange={(value) => update('includeSystemCards', value)} copy={copy} />
+      </SettingGroup>
+      <SettingGroup label={copy.theme}><ChoiceRow items={[{ value: 'dark', label: copy.dark }, { value: 'light', label: copy.light }]} value={settings.theme} onChange={(value) => update('theme', value as Theme)} /></SettingGroup>
+      <SettingGroup label={copy.language}><ChoiceRow items={localeOptions.map((item) => ({ value: item.id, label: item.label }))} value={settings.locale} onChange={(value) => update('locale', value as Locale)} /></SettingGroup>
+      <SettingGroup label={copy.motion}><Toggle value={settings.motion} onChange={(value) => update('motion', value)} copy={copy} /></SettingGroup>
+      <SettingGroup label={copy.sound}><Toggle value={settings.sound} onChange={(value) => update('sound', value)} copy={copy} /></SettingGroup>
     </div>
   )
 }
 
-function KeySequence({
-  sequence,
-  platform,
-  locale,
-}: {
-  sequence: KeyCombo[]
-  platform: Platform
-  locale: Locale
+function SettingGroup({ label, description, children }: { label: string; description?: string; children: ReactNode }) {
+  return <section className="setting-group"><div><h3>{label}</h3>{description ? <p>{description}</p> : null}</div>{children}</section>
+}
+
+function ChoiceRow({ items, value, onChange }: { items: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void }) {
+  return <div className="choice-row">{items.map((item) => <button key={item.value} type="button" className={value === item.value ? 'active' : ''} onClick={() => onChange(item.value)}>{item.label}</button>)}</div>
+}
+
+function Toggle({ value, onChange, copy }: { value: boolean; onChange: (value: boolean) => void; copy: ReturnType<typeof getCopy> }) {
+  return <button className={`toggle ${value ? 'active' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}><span />{value ? copy.on : copy.off}</button>
+}
+
+function Select({ value, onChange, children }: { value: string; onChange: (value: string) => void; children: ReactNode }) {
+  return <select value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>
+}
+
+function LibraryPanel({ shortcuts, locale, platform, query, setQuery }: {
+  shortcuts: Shortcut[]; locale: Locale; platform: Platform; query: string; setQuery: (value: string) => void
 }) {
+  const filtered = shortcuts.filter((item) => `${item.action} ${item.category} ${shortcutSpecialty(item)}`.toLowerCase().includes(query.toLowerCase()))
   return (
-    <span
-      className="key-sequence"
-      aria-label={formatSequence(sequence, platform, locale)}
-    >
-      {sequence.map((combo, index) => (
-        <span
-          key={`${comboSignature(combo, platform)}-${index}`}
-          className="sequence-step"
-        >
-          {index > 0 ? (
-            <span className="sequence-arrow">{t(locale, 'sequence.then')}</span>
-          ) : null}
-          <Keycaps combo={combo} platform={platform} />
-        </span>
-      ))}
-    </span>
+    <div className="library-panel">
+      <input className="drawer-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={getCopy(locale).search} />
+      <p className="drawer-count">{filtered.length} / {shortcuts.length}</p>
+      <div className="library-list">{filtered.map((shortcut) => (
+        <div className="library-item" key={shortcut.id}>
+          <div><strong>{shortcutAction(locale, shortcut.action)}</strong><span>{specialtyName(locale, shortcutSpecialty(shortcut))} · {shortcut.capture === 'simulated' ? getCopy(locale).unscored : categoryName(locale, shortcut.category)}</span></div>
+          <small>{formatSequence(shortcut.realKeys ? [shortcut.realKeys] : shortcutSequence(shortcut), platform)}</small>
+        </div>
+      ))}</div>
+    </div>
   )
 }
 
-function Keycaps({ combo, platform }: { combo: KeyCombo; platform: Platform }) {
-  return (
-    <span className="keycaps" aria-label={formatCombo(combo, platform).join(' ')}>
-      {formatCombo(combo, platform).map((part) => (
-        <kbd key={part}>{part}</kbd>
-      ))}
-    </span>
-  )
+function HistoryPanel({ progress, locale }: { progress: ProgressState; locale: Locale }) {
+  const copy = getCopy(locale)
+  return <div className="history-list">{progress.recentSessions.length ? progress.recentSessions.map((session) => (
+    <div className="history-item" key={session.id}>
+      <time>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(session.date)}</time>
+      <strong>{session.accuracy}%</strong><span>{session.correct} recalls · {session.durationSec}s</span>
+    </div>
+  )) : <p className="empty-message">{copy.noHistory}</p>}</div>
 }
 
-function buildQueue(pool: Shortcut[], target: number) {
-  const queue: Shortcut[] = []
-  while (queue.length < target) {
-    queue.push(...shuffle(pool))
-  }
-  return queue.slice(0, target)
+function formatSequence(sequence: KeyCombo[], platform: Platform) {
+  return sequence.map((combo) => formatCombo(combo, platform).join(' + ')).join('  →  ')
 }
 
-function shuffle<T>(items: T[]) {
-  return [...items].sort(() => Math.random() - 0.5)
+function sessionLabel(settings: AppSettings, copy: ReturnType<typeof getCopy>) {
+  const mode = settings.mode === 'timed' ? `${settings.duration}s` : settings.mode === 'fixed' ? `${settings.count}` : settings.mode === 'weak' ? copy.weak : settings.mode === 'category' ? copy.category : copy.specialty
+  return `${settings.learning === 'recall' ? copy.recall : copy.learn} · ${mode} · ${settings.platform === 'mac' ? 'macOS' : 'Windows'}`
 }
 
-function updateStats(stats: SessionStats, outcome: ShortcutOutcome): SessionStats {
-  const isAttempt = outcome !== 'skipped'
-  const isCorrect = outcome === 'correct'
-  const nextStreak = isCorrect ? stats.streak + 1 : 0
-
-  return {
-    attempts: stats.attempts + (isAttempt ? 1 : 0),
-    correct: stats.correct + (isCorrect ? 1 : 0),
-    wrong: stats.wrong + (outcome === 'wrong' ? 1 : 0),
-    close: stats.close + (outcome === 'close' ? 1 : 0),
-    skipped: stats.skipped + (outcome === 'skipped' ? 1 : 0),
-    streak: nextStreak,
-    bestStreak: Math.max(stats.bestStreak, nextStreak),
-  }
+function outcomeLabel(copy: ReturnType<typeof getCopy>, outcome: ShortcutOutcome) {
+  if (outcome === 'correct') return copy.correct
+  if (outcome === 'wrong') return copy.wrong
+  if (outcome === 'close') return copy.closeCall
+  if (outcome === 'skipped') return copy.skipped
+  if (outcome === 'revealed') return copy.assisted
+  return copy.unscored
 }
 
-function createFeedback(
-  outcome: ShortcutOutcome,
-  shortcut: Shortcut,
-  pressed: KeyCombo[] | undefined,
-  platform: Platform,
-  locale: Locale,
-): Feedback {
-  const target = formatSequence(shortcutSequence(shortcut), platform, locale)
-  if (outcome === 'correct') {
-    return {
-      kind: 'correct',
-      title: t(locale, 'feedback.correctTitle'),
-      detail: `${shortcutAction(locale, shortcut.action)} ${t(locale, 'feedback.correctDetail')}`,
-      combo: pressed,
-    }
-  }
-
-  if (outcome === 'close') {
-    return {
-      kind: 'close',
-      title: t(locale, 'feedback.closeTitle'),
-      detail: t(locale, 'feedback.closeDetail'),
-      combo: pressed,
-    }
-  }
-
-  if (outcome === 'skipped') {
-    return {
-      kind: 'skipped',
-      title: t(locale, 'feedback.skippedTitle'),
-      detail: targetWasDetail(locale, target),
-    }
-  }
-
-  return {
-    kind: 'wrong',
-    title: t(locale, 'feedback.wrongTitle'),
-    detail: targetExpectedDetail(locale, target),
-    combo: pressed,
-  }
+function cycleModalFocus(containerSelector: string, backwards: boolean) {
+  const container = document.querySelector(containerSelector)
+  if (!container) return
+  const focusable = Array.from(
+    container.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]'),
+  ).filter((element) => !element.hasAttribute('hidden'))
+  if (!focusable.length) return
+  const current = focusable.indexOf(document.activeElement as HTMLElement)
+  const next = backwards
+    ? (current <= 0 ? focusable.length - 1 : current - 1)
+    : (current >= focusable.length - 1 ? 0 : current + 1)
+  focusable[next]?.focus()
 }
 
-function getExpectedSequences(shortcut: Shortcut) {
-  return [
-    shortcutSequence(shortcut),
-    ...(shortcut.aliases ?? []).map((combo) => [combo]),
-  ]
-}
-
-function sequencesEqual(
-  expected: KeyCombo[],
-  pressed: KeyCombo[],
-  platform: Platform,
-) {
-  return (
-    expected.length === pressed.length &&
-    expected.every(
-      (combo, index) =>
-        comboSignature(combo, platform) === comboSignature(pressed[index]!, platform),
-    )
-  )
-}
-
-function sequenceStartsWith(
-  expected: KeyCombo[],
-  pressed: KeyCombo[],
-  platform: Platform,
-) {
-  return (
-    pressed.length < expected.length &&
-    pressed.every(
-      (combo, index) =>
-        comboSignature(combo, platform) === comboSignature(expected[index]!, platform),
-    )
-  )
-}
-
-function formatSequence(sequence: KeyCombo[], platform: Platform, locale: Locale) {
-  return sequence
-    .map((combo) => formatCombo(combo, platform).join(' + '))
-    .join(` ${t(locale, 'sequence.then')} `)
-}
-
-function calculateAccuracy(stats: SessionStats) {
-  if (stats.attempts === 0) {
-    return 100
-  }
-
-  return Math.round((stats.correct / stats.attempts) * 100)
-}
-
-function calculateSpm(correct: number, elapsedSeconds: number) {
-  if (elapsedSeconds <= 0) {
-    return 0
-  }
-
-  return (correct / elapsedSeconds) * 60
-}
-
-function createSessionRecord(
-  stats: SessionStats,
-  startedAt: number,
-  finishedAt: number,
-  platform: Platform,
-  mode: SessionMode,
-  category: CategoryId | undefined,
-  specialty: SpecialtyId | undefined,
-): SessionRecord {
-  const durationSec = Math.max(1, Math.round((finishedAt - startedAt) / 1000))
-  const spm = calculateSpm(stats.correct, durationSec)
-  const accuracy = calculateAccuracy(stats)
-  const score = Math.max(
-    0,
-    Math.round(
-      stats.correct * 100 +
-        stats.bestStreak * 14 +
-        spm * 4 -
-        stats.wrong * 18 -
-        stats.close * 8 -
-        stats.skipped * 10,
-    ),
-  )
-
-  return {
-    id: `${finishedAt}-${Math.random().toString(36).slice(2)}`,
-    date: finishedAt,
-    platform,
-    mode,
-    category,
-    specialty,
-    durationSec,
-    correct: stats.correct,
-    attempts: stats.attempts,
-    wrong: stats.wrong,
-    close: stats.close,
-    skipped: stats.skipped,
-    accuracy,
-    spm,
-    bestStreak: stats.bestStreak,
-    score,
-  }
-}
-
-function comboFromKeyboardEvent(event: KeyboardEvent, platform: Platform) {
-  const key = normalizeKey(event)
-  if (!key || isModifierKey(key)) {
-    return null
-  }
-
-  const modifiers: KeyCombo['modifiers'] = []
-  if (event.metaKey) {
-    modifiers.push('meta')
-  }
-  if (event.ctrlKey) {
-    modifiers.push('control')
-  }
-  if (event.altKey) {
-    modifiers.push('alt')
-  }
-  if (event.shiftKey) {
-    modifiers.push('shift')
-  }
-
-  return {
-    key,
-    modifiers: sortModifiers(platform, modifiers),
-  }
-}
-
-function isModifierKey(key: string) {
-  return key === 'meta' || key === 'control' || key === 'alt' || key === 'shift'
-}
-
-function normalizeKey(event: KeyboardEvent) {
-  const byCode: Record<string, string> = {
-    Space: 'space',
-    Tab: 'tab',
-    Enter: 'enter',
-    Escape: 'escape',
-    Backspace: 'backspace',
-    Delete: 'delete',
-    ArrowLeft: 'arrowleft',
-    ArrowRight: 'arrowright',
-    ArrowUp: 'arrowup',
-    ArrowDown: 'arrowdown',
-    Home: 'home',
-    End: 'end',
-    PageUp: 'pageup',
-    PageDown: 'pagedown',
-    Backquote: '`',
-    Slash: '/',
-    Period: '.',
-    Comma: ',',
-    Minus: '-',
-    Equal: '=',
-    BracketLeft: '[',
-    BracketRight: ']',
-    F2: 'f2',
-    F5: 'f5',
-  }
-
-  if (byCode[event.code]) {
-    return byCode[event.code]
-  }
-
-  const key = event.key.toLowerCase()
-  if (key === ' ') {
-    return 'space'
-  }
-  if (key.length === 1) {
-    return key
-  }
-  if (key.startsWith('f') && key.length <= 3) {
-    return key
-  }
-
-  return key
+function playFeedback(outcome: ShortcutOutcome, enabled: boolean) {
+  if (!enabled || typeof AudioContext === 'undefined') return
+  const context = new AudioContext()
+  const oscillator = context.createOscillator()
+  const gain = context.createGain()
+  oscillator.frequency.value = outcome === 'correct' ? 520 : 180
+  gain.gain.setValueAtTime(0.025, context.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.045)
+  oscillator.connect(gain).connect(context.destination)
+  oscillator.start(); oscillator.stop(context.currentTime + 0.05)
+  oscillator.addEventListener('ended', () => context.close())
 }
 
 export default App

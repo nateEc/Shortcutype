@@ -1,45 +1,16 @@
 :root {
-  --font-display:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  --font-body:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  --font-mono:
-    "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
-  font-family: var(--font-body);
+  --font-display: Charter, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-utility: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SFMono-Regular', 'SF Mono', ui-monospace, Consolas, monospace;
+  font-family: var(--font-utility);
   color-scheme: dark light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
-
-* {
-  box-sizing: border-box;
-}
-
-html {
-  min-width: 320px;
-  background: #101318;
-}
-
-body {
-  min-width: 320px;
-  min-height: 100svh;
-  margin: 0;
-  background: #101318;
-}
-
-body[data-theme="light"] {
-  background: #f5f7fa;
-}
-
-#root {
-  min-height: 100svh;
-}
-
-::selection {
-  color: #101318;
-  background: #5fd3ff;
-}
+* { box-sizing: border-box; }
+html { min-width: 320px; background: #121210; }
+body { min-width: 320px; min-height: 100svh; margin: 0; background: #121210; }
+body[data-theme='light'] { background: #eceee9; }
+#root { min-height: 100svh; }
+::selection { color: #121210; background: #d4a64f; }
