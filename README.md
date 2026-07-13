@@ -75,19 +75,26 @@ Existing `shortcutype-progress-v1` and `shortcutype-settings-v1` data is migrate
 
 ## Development
 
+With Node.js 20 or newer, a fresh checkout starts with one command:
+
 ```bash
-npm install
-npm run dev
+npm start
 ```
+
+The start command installs locked dependencies only when they are missing, then launches the local Vite server.
 
 Quality gates:
 
 ```bash
 npm test
+npm run test:e2e
 npm run lint
 npm run build
 npm audit --audit-level=moderate
+npm run benchmark
 ```
+
+Run the complete release gate with `npm run verify`.
 
 Core input parsing, sequence matching, adaptive scheduling, onboarding transitions, platform-correct tutorial chords, v1→v2 migration, timing boundaries, command-palette behavior, and keyboard session transitions are covered by Vitest and Testing Library.
 
@@ -96,3 +103,5 @@ Core input parsing, sequence matching, adaptive scheduling, onboarding transitio
 Browser-reviewed states live in [`docs/screenshots`](docs/screenshots): ready, focused running, partial sequence, error, command palette, results, light theme, and mobile. The [`onboarding` set](docs/screenshots/onboarding) records the first-run explanation, Teach, Imitate, Recall, error comparison, tool selection, personalized ready screen, and mobile ready screen.
 
 Shortcutype is inspired by the focus and immediacy of excellent typing tools, but its interaction model, visual system, Chord Trace, scheduling, and implementation are original.
+
+Further documentation: [architecture](docs/ARCHITECTURE.md), [user guide](docs/USER_GUIDE.md), [known limitations](docs/KNOWN_LIMITATIONS.md), and [hardening progress](progress.md).

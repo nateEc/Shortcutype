@@ -1,0 +1,77 @@
+Shortcutype full verification run 5/5
+
+> shortcutype@0.0.0 verify
+> npm run lint && npm test && npm run test:e2e && npm run build && npm run benchmark && npm audit --audit-level=moderate
+
+
+> shortcutype@0.0.0 lint
+> tsc -b --pretty false
+
+
+> shortcutype@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.10 /Users/nathanshan/Desktop/shortcut-fluency
+
+
+ Test Files  7 passed (7)
+      Tests  42 passed (42)
+   Start at  11:48:05
+   Duration  1.65s (transform 625ms, setup 1.72s, import 631ms, tests 524ms, environment 4.12s)
+
+
+> shortcutype@0.0.0 test:e2e
+> playwright test
+
+[WebServer] (node:18327) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 8 tests using 1 worker
+
+(node:18329) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [desktop-chromium] › e2e/core-paths.spec.ts:14:1 › new user completes Teach → Imitate → Recall and starts personalized practice (1.2s)
+  ✓  2 [desktop-chromium] › e2e/core-paths.spec.ts:39:1 › returning user completes a full practice session and reaches results (368ms)
+  ✓  3 [desktop-chromium] › e2e/core-paths.spec.ts:56:1 › settings and library expose accessible state, empty results, and focus recovery (626ms)
+  ✓  4 [desktop-chromium] › e2e/core-paths.spec.ts:78:1 › 390px ready page has no horizontal overflow and keeps the library reachable (448ms)
+  ✓  5 [desktop-chromium] › e2e/core-paths.spec.ts:93:1 › practice exposes modifier errors, assisted answers, and a resumable command palette (306ms)
+  ✓  6 [desktop-chromium] › e2e/core-paths.spec.ts:120:1 › denied local storage shows a recoverable error instead of crashing (229ms)
+  ✓  7 [desktop-chromium] › e2e/visual-evidence.spec.ts:9:1 › captures verified desktop, error, results, and mobile states (657ms)
+  ✓  8 [desktop-chromium] › e2e/visual-evidence.spec.ts:42:1 › captures the first-run explanation (241ms)
+
+  8 passed (5.2s)
+
+> shortcutype@0.0.0 build
+> tsc -b && vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 41 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.66 kB │ gzip:  0.40 kB
+dist/assets/index-CkxrkL0o.css   24.39 kB │ gzip:  5.90 kB
+dist/assets/index-fVl9-WPB.js   271.29 kB │ gzip: 83.52 kB
+✓ built in 535ms
+
+> shortcutype@0.0.0 benchmark
+> vitest bench --run
+
+Benchmarking is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.
+
+ RUN  v4.1.10 /Users/nathanshan/Desktop/shortcut-fluency
+
+
+ ✓ src/performance.bench.ts > practice hot paths 1597ms
+     name                                                      hz     min     max    mean     p75     p99    p995    p999     rme  samples
+   · schedule 100 prompts from the full native pool     12,621.26  0.0587  4.0503  0.0792  0.0635  0.3590  0.5370  1.4054  ±3.34%     6311
+   · evaluate a complete shortcut sequence           2,009,174.20  0.0003  3.8410  0.0005  0.0005  0.0008  0.0010  0.0049  ±2.37%  1004588
+
+ BENCH  Summary
+
+  evaluate a complete shortcut sequence - src/performance.bench.ts > practice hot paths
+    159.19x faster than schedule 100 prompts from the full native pool
+
+found 0 vulnerabilities

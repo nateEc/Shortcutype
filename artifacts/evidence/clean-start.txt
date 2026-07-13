@@ -1,0 +1,14 @@
+Shortcutype clean-environment start verification
+Date: 2026-07-13
+Source: current worktree copied to /tmp/shortcutype-clean-start
+Precondition: node_modules and dist were absent; Node.js 22.22.1 and npm were available
+Command: npm start
+
+Observed output:
+- scripts/start.mjs detected missing dependencies
+- npm ci installed 161 locked packages
+- npm run dev launched Vite successfully
+- Vite reported ready in 635 ms
+- Local URL was printed (5174 because the normal development server already occupied 5173)
+
+Result: PASS

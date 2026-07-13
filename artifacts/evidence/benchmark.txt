@@ -1,0 +1,17 @@
+
+> shortcutype@0.0.0 benchmark
+> vitest bench --run
+
+
+ RUN  v4.1.10 /Users/nathanshan/Desktop/shortcut-fluency
+
+
+ ✓ src/performance.bench.ts > practice hot paths 1602ms
+     name                                                      hz     min     max    mean     p75     p99    p995    p999     rme  samples
+   · schedule 100 prompts from the full native pool     14,058.92  0.0587  2.5313  0.0711  0.0627  0.2953  0.3477  0.6892  ±1.82%     7030
+   · evaluate a complete shortcut sequence           2,163,077.81  0.0003  0.5895  0.0005  0.0004  0.0007  0.0010  0.0039  ±0.84%  1081539
+
+ BENCH  Summary
+
+  evaluate a complete shortcut sequence - src/performance.bench.ts > practice hot paths
+    153.86x faster than schedule 100 prompts from the full native pool
