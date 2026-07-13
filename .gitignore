@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated verification reports (curated evidence remains tracked)
+artifacts/playwright-report/
+artifacts/test-results/
+playwright-report/
+test-results/
