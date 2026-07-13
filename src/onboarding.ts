@@ -1,5 +1,6 @@
 import type { ProgressState } from './progress'
 import type { KeyCombo, Platform, Shortcut, SpecialtyId } from './shortcuts'
+import { readStorage, writeStorage } from './storage'
 
 export const ONBOARDING_KEY = 'shortcutype-onboarding-v1'
 
@@ -34,7 +35,7 @@ export const emptyOnboarding = (): OnboardingState => ({
 export function loadOnboarding(): OnboardingState {
   if (typeof window === 'undefined') return emptyOnboarding()
   try {
-    const raw = window.localStorage.getItem(ONBOARDING_KEY)
+    const raw = readStorage(ONBOARDING_KEY)
     if (!raw) return emptyOnboarding()
     return normalizeOnboarding(JSON.parse(raw))
   } catch {
@@ -44,7 +45,7 @@ export function loadOnboarding(): OnboardingState {
 
 export function saveOnboarding(state: OnboardingState) {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(ONBOARDING_KEY, JSON.stringify(state))
+    writeStorage(ONBOARDING_KEY, JSON.stringify(state))
   }
   return state
 }

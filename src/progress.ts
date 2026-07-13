@@ -1,4 +1,5 @@
 import type { CategoryId, KeyCombo, Platform, SpecialtyId } from './shortcuts'
+import { readStorage, writeStorage } from './storage'
 
 export type ShortcutOutcome = 'correct' | 'wrong' | 'close' | 'skipped' | 'revealed' | 'reviewed'
 export type SessionMode = 'timed' | 'fixed' | 'category' | 'specialty' | 'weak'
@@ -85,9 +86,10 @@ export function migrateProgress(value: unknown): ProgressState {
   )
   const recentSessions = Array.isArray(candidate.recentSessions)
     ? candidate.recentSessions
-        .filter((session) =>
-          Boolean(session && typeof session.id === 'string' && typeof session.date === 'number'),
-        )
+        .filter((session) => Boolean(
+          session && typeof session.id === 'string' && typeof session.date === 'number' &&
+          Number.isFinite(session.date) && session.date > 0,
+        ))
         .slice(0, MAX_SESSIONS)
         .map((session) => normalizeSession(session as Partial<SessionRecord> & { id: string; date: number }))
     : []
@@ -105,9 +107,11 @@ export function loadProgress(): ProgressState {
   if (typeof window === 'undefined') return emptyProgress()
   for (const key of [PROGRESS_KEY, LEGACY_PROGRESS_KEY]) {
     try {
-      const raw = window.localStorage.getItem(key)
+      const raw = readStorage(key)
       if (!raw) continue
-      const migrated = migrateProgress(JSON.parse(raw))
+      const parsed = JSON.parse(raw) as { version?: unknown }
+      if (parsed?.version !== 1 && parsed?.version !== 2) continue
+      const migrated = migrateProgress(parsed)
       if (key === LEGACY_PROGRESS_KEY) saveProgress(migrated)
       return migrated
     } catch {
@@ -118,9 +122,7 @@ export function loadProgress(): ProgressState {
 }
 
 export function saveProgress(progress: ProgressState) {
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress))
-  }
+  writeStorage(PROGRESS_KEY, JSON.stringify(progress))
 }
 
 export function getShortcutAccuracy(stat?: ShortcutStat) {
@@ -177,7 +179,8 @@ export function recordSession(progress: ProgressState, session: SessionRecord) {
   return updated
 }
 
-function normalizeStat(stat: Partial<ShortcutStat>): ShortcutStat {
+function normalizeStat(value: unknown): ShortcutStat {
+  const stat = value && typeof value === 'object' ? value as Partial<ShortcutStat> : {}
   return {
     attempts: finite(stat.attempts), correct: finite(stat.correct),
     wrong: finite(stat.wrong), close: finite(stat.close), skipped: finite(stat.skipped),
@@ -188,7 +191,7 @@ function normalizeStat(stat: Partial<ShortcutStat>): ShortcutStat {
 
 function normalizeSession(session: Partial<SessionRecord> & { id: string; date: number }): SessionRecord {
   return {
-    id: session.id, date: session.date, platform: session.platform ?? 'mac',
+    id: session.id, date: session.date, platform: session.platform === 'windows' ? 'windows' : 'mac',
     mode: session.mode ?? 'fixed', category: session.category, specialty: session.specialty,
     durationSec: Math.max(1, finite(session.durationSec)), correct: finite(session.correct),
     attempts: finite(session.attempts), wrong: finite(session.wrong), close: finite(session.close),

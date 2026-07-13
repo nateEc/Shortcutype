@@ -81,8 +81,10 @@ export function describeMismatch(
   shortcut: Shortcut,
   pressed: KeyCombo,
   platform: Platform,
+  step = 0,
 ) {
-  const target = expectedSequences(shortcut)[0][0]
+  const sequence = expectedSequences(shortcut)[0]
+  const target = sequence[Math.min(Math.max(0, step), sequence.length - 1)]
   if (target.key !== pressed.key) return 'key' as const
   const expected = comboSignature(target, platform)
   const actual = comboSignature(pressed, platform)

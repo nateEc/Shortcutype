@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { comboFromKeyboardEvent, evaluateSequence, eventMatchesExpectedStep, normalizeKey, shortcutPracticePolicy } from './input'
+import { comboFromKeyboardEvent, describeMismatch, evaluateSequence, eventMatchesExpectedStep, normalizeKey, shortcutPracticePolicy } from './input'
 import type { Shortcut } from './shortcuts'
 
 const shortcut: Shortcut = {
@@ -46,5 +46,10 @@ describe('keyboard input', () => {
     expect(eventMatchesExpectedStep(paletteShortcut, 0, {
       key: 'p', code: 'KeyP', metaKey: true, ctrlKey: false, altKey: false, shiftKey: true,
     }, 'mac')).toBe(true)
+  })
+
+  it('describes a mistake against the current step of a multi-step shortcut', () => {
+    expect(describeMismatch(shortcut, { modifiers: ['shift'], key: 'c' }, 'mac', 1)).toBe('modifiers')
+    expect(describeMismatch(shortcut, { modifiers: [], key: 'x' }, 'mac', 1)).toBe('key')
   })
 })
