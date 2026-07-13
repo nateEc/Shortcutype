@@ -4,6 +4,8 @@
 
 **Turn commands into reflexes.**
 
+**[Try Shortcutype online](https://nateEc.github.io/Shortcutype/)**
+
 Shortcutype is a keyboard-first recall trainer for developer shortcuts. It presents the action, hides the answer, captures the real chord, and immediately schedules the next useful recall. It is local-only: no account, backend, analytics, or telemetry.
 
 ![Shortcutype ready state](docs/screenshots/ready.png)

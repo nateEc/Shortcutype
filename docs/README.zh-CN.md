@@ -4,6 +4,8 @@
 
 **把命令练成下意识。**
 
+**[在线体验 Shortcutype](https://nateEc.github.io/Shortcutype/)**
+
 Shortcutype 是面向开发者快捷键的键盘优先回忆训练器。它给出真实工作动作、隐藏答案、捕获实际按键组合，并立即安排下一次有价值的回忆。所有数据只保存在本机：无账号、无后端、无分析和遥测。
 
 ![Shortcutype 准备状态](screenshots/ready.png)
