@@ -1,13 +1,15 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import App from './App'
 import { loadSettings } from './settings'
 import { getShortcuts, shortcutSequence } from './shortcuts'
 import { ONBOARDING_KEY } from './onboarding'
+import { clearStorageFailure } from './storage'
 
 describe('keyboard-first practice flow', () => {
   beforeEach(() => {
+    clearStorageFailure()
     localStorage.clear()
     localStorage.setItem('shortcutype-settings-v2', JSON.stringify({
       version: 2, platform: 'mac', mode: 'fixed', category: 'editor', specialty: 'vscode',
@@ -52,9 +54,70 @@ describe('keyboard-first practice flow', () => {
   it('closes the settings drawer with Escape', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Practice setup' }))
-    expect(screen.getByRole('dialog', { name: 'settings' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Practice setup' })).toBeInTheDocument()
+    expect(document.querySelector('main')).toHaveAttribute('aria-hidden', 'true')
     fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'settings' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Practice setup' })).not.toBeInTheDocument()
+    expect(document.querySelector('main')).not.toHaveAttribute('aria-hidden')
+  })
+
+  it('restores focus to the control that opened a drawer', async () => {
+    render(<App />)
+    const trigger = screen.getByRole('button', { name: 'Practice setup' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('exposes selected settings without relying on color', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Practice setup' }))
+    expect(screen.getByRole('group', { name: 'Platform' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'macOS' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Windows' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('shows actionable empty states for weak review and library search', () => {
+    render(<App />)
+    expect(screen.getByText('No weak shortcuts yet. Use all shortcuts for this round.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Shortcut library' }))
+    const dialog = screen.getByRole('dialog', { name: 'Shortcut library' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Search commands…' }), { target: { value: 'not-a-real-shortcut' } })
+    expect(within(dialog).getByRole('status')).toHaveTextContent('No shortcuts match this search.')
+  })
+
+  it('moves focus into the practice landmark from the skip link', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('link', { name: 'Skip to practice' }))
+    await waitFor(() => expect(document.getElementById('practice-stage')).toHaveFocus())
+  })
+
+  it('warns without crashing when local persistence is unavailable', async () => {
+    const denied = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('denied') })
+    render(<App />)
+    expect(await screen.findByRole('alert')).toHaveTextContent("progress won't be saved")
+    denied.mockRestore()
+  })
+
+  it('localizes history details instead of mixing English into Chinese UI', () => {
+    localStorage.setItem('shortcutype-settings-v2', JSON.stringify({
+      version: 2, platform: 'mac', mode: 'fixed', category: 'editor', specialty: 'vscode',
+      duration: 60, count: 10, theme: 'dark', locale: 'zh-CN', learning: 'recall',
+      includeSystemCards: false, motion: false, sound: false,
+    }))
+    localStorage.setItem('shortcutype-progress-v2', JSON.stringify({
+      version: 2, bestStreak: 1, bestScore: 10, shortcutStats: {},
+      recentSessions: [{
+        id: 'session', date: 1_700_000_000_000, platform: 'mac', mode: 'fixed',
+        durationSec: 12, correct: 2, attempts: 2, wrong: 0, close: 0, skipped: 0,
+        revealed: 0, accuracy: 100, spm: 10, bestStreak: 2, score: 200, events: [],
+      }],
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '训练历史' }))
+    expect(screen.getByText('2 次回忆 · 12s')).toBeInTheDocument()
+    expect(screen.queryByText(/recalls/)).not.toBeInTheDocument()
   })
 
   it('reveals with F1 and marks the attempt unscored', () => {
@@ -154,6 +217,7 @@ describe('keyboard-first practice flow', () => {
 
 describe('first success experience', () => {
   beforeEach(() => {
+    clearStorageFailure()
     localStorage.clear()
     localStorage.setItem('shortcutype-settings-v2', JSON.stringify({
       version: 2, platform: 'mac', mode: 'fixed', category: 'editor', specialty: 'vscode',

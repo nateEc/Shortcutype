@@ -52,6 +52,9 @@ const en = {
   readyTitle: 'What do you want to practice?', readyBody: 'You will see an action. Answer with its shortcut — never by typing the action name.',
   continuePractice: 'Continue last practice', warmupIntent: '5-minute common warm-up',
   weakIntent: 'Review difficult shortcuts', toolIntentPrefix: 'Practice 10', advancedSetup: 'Advanced setup',
+  persistenceError: "This browser blocked local storage. You can keep practicing, but progress won't be saved.",
+  dismiss: 'Dismiss', noLibraryResults: 'No shortcuts match this search.', application: 'Application',
+  practiceRegion: 'Shortcut practice', sequenceThen: 'then',
 }
 
 const zh: typeof en = {
@@ -100,6 +103,9 @@ const zh: typeof en = {
   readyTitle: '今天想练什么？', readyBody: '你会看到一个动作，请用快捷键回答，不要输入动作名称。',
   continuePractice: '继续上次训练', warmupIntent: '5 分钟通用热身', weakIntent: '复习容易出错的快捷键',
   toolIntentPrefix: '练习 10 个', advancedSetup: '高级设置',
+  persistenceError: '浏览器阻止了本地存储。你仍可继续训练，但本次进度不会被保存。',
+  dismiss: '关闭提示', noLibraryResults: '没有匹配这个搜索的快捷键。', application: '应用导航',
+  practiceRegion: '快捷键训练', sequenceThen: '然后',
 }
 
 export type Copy = typeof en

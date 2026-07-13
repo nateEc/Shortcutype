@@ -49,6 +49,7 @@ import {
 } from './onboarding'
 import { OnboardingExperience } from './components/OnboardingExperience'
 import { ReadyHome } from './components/ReadyHome'
+import { clearStorageFailure, hasStorageFailure, STORAGE_ERROR_EVENT, writeStorage } from './storage'
 
 type Panel = 'settings' | 'library' | 'history' | null
 type Phase = 'ready' | 'running' | 'paused' | 'finished'
@@ -110,8 +111,10 @@ function App() {
   const [now, setNow] = useState(Date.now())
   const [retryPool, setRetryPool] = useState<Shortcut[] | null>(null)
   const [restartArmed, setRestartArmed] = useState(false)
+  const [storageError, setStorageError] = useState(hasStorageFailure)
   const commandInputRef = useRef<HTMLInputElement>(null)
   const stageRef = useRef<HTMLElement>(null)
+  const focusReturnRef = useRef<HTMLElement | null>(null)
   const savedSummaryIds = useRef(new Set<string>())
   const copy = getCopy(settings.locale)
 
@@ -147,7 +150,13 @@ function App() {
     : 100
 
   useEffect(() => {
-    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+    const reportError = () => setStorageError(true)
+    window.addEventListener(STORAGE_ERROR_EVENT, reportError)
+    return () => window.removeEventListener(STORAGE_ERROR_EVENT, reportError)
+  }, [])
+
+  useEffect(() => {
+    writeStorage(SETTINGS_KEY, JSON.stringify(settings))
     document.body.dataset.theme = settings.theme
     document.body.dataset.motion = settings.motion ? 'on' : 'off'
     document.documentElement.lang = settings.locale
@@ -321,6 +330,8 @@ function App() {
       return { ...current, phase: 'finished', finishedAt, pausedAt: null, summary }
     })
     setCommandOpen(false)
+    focusReturnRef.current = null
+    queueMicrotask(() => document.getElementById('practice-stage')?.focus())
   }
 
   function evaluateCombo(combo: KeyCombo) {
@@ -336,7 +347,7 @@ function App() {
       }))
       return
     }
-    const mismatch = describeMismatch(active, combo, settings.platform)
+    const mismatch = describeMismatch(active, combo, settings.platform, nextBuffer.length - 1)
     applyOutcome(verdict, nextBuffer, mismatch === 'modifiers' ? copy.modifierError : copy.keyError)
   }
 
@@ -427,6 +438,7 @@ function App() {
   }
 
   function openCommand() {
+    rememberFocus()
     setCommandQuery(''); setCommandIndex(0); setCommandOpen(true)
     setSession((current) => current.phase === 'running'
       ? { ...current, phase: 'paused', pausedAt: Date.now() }
@@ -438,15 +450,33 @@ function App() {
     setSession((current) => current.phase === 'paused'
       ? { ...current, phase: 'running', pausedMs: current.pausedMs + (Date.now() - (current.pausedAt ?? Date.now())), pausedAt: null }
       : current)
+    restoreFocus()
   }
 
   function openPanel(next: Exclude<Panel, null>) {
+    if (!commandOpen) rememberFocus()
     setCommandOpen(false); setPanel(next)
   }
 
   function closePanel() {
     setPanel(null)
     if (session.phase === 'paused') closeCommand()
+    else restoreFocus()
+  }
+
+  function rememberFocus() {
+    if (!focusReturnRef.current && document.activeElement instanceof HTMLElement) {
+      focusReturnRef.current = document.activeElement
+    }
+  }
+
+  function restoreFocus() {
+    const target = focusReturnRef.current
+    focusReturnRef.current = null
+    queueMicrotask(() => {
+      if (target?.isConnected) target.focus()
+      else document.getElementById('practice-stage')?.focus()
+    })
   }
 
   function toggleTheme() {
@@ -522,23 +552,31 @@ function App() {
     ? ({ new: copy.reasonNew, weak: copy.reasonWeak, due: copy.reasonDue, coverage: copy.reasonCoverage } as const)[activeScheduled.reason]
     : copy.reasonCoverage
   const revealVisible = settings.learning === 'learn' || session.revealed || active?.capture === 'simulated'
+  const showAttempt = session.feedback.kind === 'wrong' || session.feedback.kind === 'close'
+  const modalOpen = commandOpen || panel !== null
 
   return (
     <div className={`app phase-${session.phase} ${onboardingActive ? 'onboarding-active' : ''}`}>
-      <a className="skip-link" href="#practice-stage">{copy.skipToPractice}</a>
-      <header className="masthead" aria-hidden={session.phase === 'running' ? 'true' : undefined}>
+      <a className="skip-link" href="#practice-stage" aria-hidden={modalOpen || undefined} tabIndex={modalOpen ? -1 : undefined} onClick={() => queueMicrotask(() => document.getElementById('practice-stage')?.focus())}>{copy.skipToPractice}</a>
+      {storageError ? (
+        <div className="storage-alert" role="alert">
+          <span>{copy.persistenceError}</span>
+          <button type="button" onClick={() => { clearStorageFailure(); setStorageError(false) }}>{copy.dismiss}</button>
+        </div>
+      ) : null}
+      <header className="masthead" aria-hidden={session.phase === 'running' || modalOpen ? 'true' : undefined}>
         <button className="brand" type="button" onClick={() => setSession((value) => ({ ...value, phase: 'ready' }))}>
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>shortcutype</span>
         </button>
-        <nav className="utility-nav" aria-label="Application">
-          <button type="button" onClick={() => setPanel('library')}>{copy.library}</button>
-          <button type="button" onClick={() => setPanel('history')}>{copy.history}</button>
-          <button type="button" onClick={() => setPanel('settings')} aria-label={copy.settings}>⌘</button>
+        <nav className="utility-nav" aria-label={copy.application}>
+          <button type="button" onClick={() => openPanel('library')}>{copy.library}</button>
+          <button type="button" onClick={() => openPanel('history')}>{copy.history}</button>
+          <button type="button" onClick={() => openPanel('settings')} aria-label={copy.settings}>⌘</button>
         </nav>
       </header>
 
-      <main id="practice-stage" className="practice-shell">
+      <main id="practice-stage" className="practice-shell" tabIndex={-1} aria-hidden={modalOpen || undefined}>
         {onboardingActive ? (
           <OnboardingExperience
             state={onboarding}
@@ -566,13 +604,13 @@ function App() {
             onWarmup={startWarmup}
             onWeak={startWeakReview}
             onTool={startToolPractice}
-            onAdvanced={() => setPanel('settings')}
+            onAdvanced={() => openPanel('settings')}
           />
         ) : (
           <section
             ref={stageRef} tabIndex={-1}
             className={`practice-stage feedback-${session.feedback.kind}`}
-            aria-label="Shortcut practice"
+            aria-label={copy.practiceRegion}
           >
             <div className="stage-hud" aria-live="off">
               <span>{settings.mode === 'timed' ? `${timeLeft}s` : `${Math.min(completed, settings.count)} / ${settings.count}`}</span>
@@ -594,11 +632,11 @@ function App() {
             </div>
 
             <ChordTrace
-              sequence={revealVisible && active ? (active.realKeys ? [active.realKeys] : shortcutSequence(active)) : session.sequenceBuffer}
-              platform={settings.platform}
+              sequence={showAttempt ? session.sequenceBuffer : revealVisible && active ? (active.realKeys ? [active.realKeys] : shortcutSequence(active)) : session.sequenceBuffer}
+              platform={settings.platform} thenLabel={copy.sequenceThen}
               concealed={!revealVisible && session.sequenceBuffer.length === 0}
               status={session.feedback.kind}
-              label={revealVisible ? copy.target : copy.yourInput}
+              label={showAttempt ? copy.yourInput : revealVisible ? copy.target : copy.yourInput}
             />
 
             <div className="stage-feedback" aria-live="polite" aria-atomic="true">
@@ -613,7 +651,7 @@ function App() {
         )}
       </main>
 
-      <footer className="key-footer" aria-hidden={session.phase === 'running' ? 'true' : undefined}>
+      <footer className="key-footer" aria-hidden={session.phase === 'running' || modalOpen ? 'true' : undefined}>
         <span>{copy.commandHint}</span><span>{copy.tagline}</span><span>v2 · {copy.localOnly}</span>
       </footer>
 
@@ -645,7 +683,7 @@ function App() {
 
       {panel ? (
         <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closePanel()}>
-          <aside className="drawer" role="dialog" aria-modal="true" aria-label={panel}>
+          <section className="drawer" role="dialog" aria-modal="true" aria-label={panel === 'settings' ? copy.settings : panel === 'library' ? copy.library : copy.history}>
             <div className="drawer-head">
               <div><small>Shortcutype /</small><h2>{panel === 'settings' ? copy.settings : panel === 'library' ? copy.library : copy.history}</h2></div>
               <button autoFocus type="button" onClick={closePanel} aria-label={copy.close}>×</button>
@@ -657,20 +695,20 @@ function App() {
             ) : (
               <HistoryPanel progress={progress} locale={settings.locale} />
             )}
-          </aside>
+          </section>
         </div>
       ) : null}
 
-      <div className="mobile-note">{copy.mobile}</div>
+      <div className="mobile-note" aria-hidden={modalOpen || undefined}>{copy.mobile}</div>
     </div>
   )
 }
 
 function ChordTrace({
-  sequence, platform, concealed, status, label,
+  sequence, platform, concealed, status, label, thenLabel,
 }: {
   sequence: KeyCombo[]; platform: Platform; concealed: boolean;
-  status: Feedback['kind']; label: string
+  status: Feedback['kind']; label: string; thenLabel: string
 }) {
   return (
     <div className={`chord-trace trace-${status} ${concealed ? 'concealed' : ''}`} aria-label={label}>
@@ -681,7 +719,7 @@ function ChordTrace({
           <><span className="pulse-node" /><span className="pulse-node delayed" /><span className="pulse-node late" /></>
         ) : sequence.length ? sequence.map((combo, step) => (
           <div className="trace-step" key={`${step}-${combo.key}`}>
-            {step > 0 ? <span className="step-link">then</span> : null}
+            {step > 0 ? <span className="step-link">{thenLabel}</span> : null}
             {formatCombo(combo, platform).map((key) => <kbd key={key}>{key}</kbd>)}
           </div>
         )) : <span className="trace-empty">…</span>}
@@ -716,7 +754,7 @@ function Results({
       </div>
       <div className="rhythm-panel">
         <div className="section-heading"><h2>{copy.rhythm}</h2><span>{finalEvents.length} {copy.recallUnit}</span></div>
-        <RhythmChart events={summary.events} duration={summary.durationSec * 1000} />
+        <RhythmChart events={summary.events} duration={summary.durationSec * 1000} label={copy.rhythm} />
       </div>
       <div className="review-panel">
         <div className="section-heading"><h2>{copy.review}</h2><span>{misses.length ? `${misses.length} ${copy.signalsToRevisit}` : copy.noMistakes}</span></div>
@@ -725,7 +763,7 @@ function Results({
             const shortcut = shortcuts.find((item) => item.id === event.shortcutId)
             return (
               <div className="review-row" key={`${event.atMs}-${index}`}>
-                <span className={`outcome-dot outcome-${event.outcome}`} aria-label={event.outcome} />
+                <span className={`outcome-dot outcome-${event.outcome}`} aria-label={outcomeLabel(copy, event.outcome)} />
                 <span>{shortcutAction(locale, event.action)}</span>
                 <small>{shortcut ? formatSequence(shortcut.realKeys ? [shortcut.realKeys] : shortcutSequence(shortcut), summary.platform) : ''}</small>
                 <em>{event.revealed ? copy.assisted : outcomeLabel(copy, event.outcome)}</em>
@@ -739,7 +777,7 @@ function Results({
   )
 }
 
-function RhythmChart({ events, duration }: { events: DrillEvent[]; duration: number }) {
+function RhythmChart({ events, duration, label }: { events: DrillEvent[]; duration: number; label: string }) {
   const scored = events.filter((event) => ['correct', 'wrong', 'close'].includes(event.outcome))
   const points = scored.map((event, index) => {
     const x = duration ? Math.min(100, (event.atMs / duration) * 100) : 0
@@ -748,11 +786,11 @@ function RhythmChart({ events, duration }: { events: DrillEvent[]; duration: num
     return `${x},${100 - (correct / previous.length) * 82}`
   })
   return (
-    <svg className="rhythm-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Accuracy over time">
+    <svg className="rhythm-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={label}>
       <path className="chart-grid" d="M0 20H100 M0 50H100 M0 80H100" />
       {points.length > 1 ? <polyline points={points.join(' ')} /> : null}
-      {scored.map((event) => (
-        <circle key={`${event.atMs}-${event.outcome}`} cx={duration ? (event.atMs / duration) * 100 : 0} cy={event.outcome === 'correct' ? 18 : 82} r="1.4" className={`chart-${event.outcome}`} />
+      {scored.map((event, index) => (
+        <circle key={`${event.atMs}-${event.outcome}-${index}`} cx={duration ? Math.min(100, (event.atMs / duration) * 100) : 0} cy={event.outcome === 'correct' ? 18 : 82} r="1.4" className={`chart-${event.outcome}`} />
       ))}
     </svg>
   )
@@ -771,32 +809,32 @@ function SettingsPanel({ settings, update, copy, onReplay }: {
   return (
     <div className="settings-groups">
       <SettingGroup label={copy.platform}>
-        <ChoiceRow items={platforms.map((item) => ({ value: item.id, label: item.label }))} value={settings.platform} onChange={(value) => update('platform', value as Platform)} />
+        <ChoiceRow ariaLabel={copy.platform} items={platforms.map((item) => ({ value: item.id, label: item.label }))} value={settings.platform} onChange={(value) => update('platform', value as Platform)} />
       </SettingGroup>
       <SettingGroup label={copy.mode}>
-        <ChoiceRow items={[
+        <ChoiceRow ariaLabel={copy.mode} items={[
           { value: 'fixed', label: copy.fixed }, { value: 'timed', label: copy.timed },
           { value: 'category', label: copy.category }, { value: 'specialty', label: copy.specialty },
           { value: 'weak', label: copy.weak },
         ]} value={settings.mode} onChange={(value) => update('mode', value as SessionMode)} />
       </SettingGroup>
       <SettingGroup label={settings.mode === 'timed' ? copy.time : copy.length}>
-        <ChoiceRow items={(settings.mode === 'timed' ? durations : counts).map((value) => ({ value: String(value), label: settings.mode === 'timed' ? `${value}s` : String(value) }))} value={String(settings.mode === 'timed' ? settings.duration : settings.count)} onChange={(value) => settings.mode === 'timed' ? update('duration', Number(value)) : update('count', Number(value))} />
+        <ChoiceRow ariaLabel={settings.mode === 'timed' ? copy.time : copy.length} items={(settings.mode === 'timed' ? durations : counts).map((value) => ({ value: String(value), label: settings.mode === 'timed' ? `${value}s` : String(value) }))} value={String(settings.mode === 'timed' ? settings.duration : settings.count)} onChange={(value) => settings.mode === 'timed' ? update('duration', Number(value)) : update('count', Number(value))} />
       </SettingGroup>
       {settings.mode === 'category' ? (
-        <SettingGroup label={copy.pack}><Select value={settings.category} onChange={(value) => update('category', value as CategoryId)}>{categories.map((item) => <option key={item.id} value={item.id}>{categoryName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
+        <SettingGroup label={copy.pack}><Select ariaLabel={copy.pack} value={settings.category} onChange={(value) => update('category', value as CategoryId)}>{categories.map((item) => <option key={item.id} value={item.id}>{categoryName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
       ) : null}
       {settings.mode === 'specialty' ? (
-        <SettingGroup label={copy.pack}><Select value={settings.specialty} onChange={(value) => update('specialty', value as SpecialtyId)}>{specialties.map((item) => <option key={item.id} value={item.id}>{specialtyName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
+        <SettingGroup label={copy.pack}><Select ariaLabel={copy.pack} value={settings.specialty} onChange={(value) => update('specialty', value as SpecialtyId)}>{specialties.map((item) => <option key={item.id} value={item.id}>{specialtyName(settings.locale, item.id)}</option>)}</Select></SettingGroup>
       ) : null}
       <SettingGroup label={copy.learningLabel}>
-        <ChoiceRow items={[{ value: 'recall', label: copy.recall }, { value: 'learn', label: copy.learn }]} value={settings.learning} onChange={(value) => update('learning', value as LearningMode)} />
+        <ChoiceRow ariaLabel={copy.learningLabel} items={[{ value: 'recall', label: copy.recall }, { value: 'learn', label: copy.learn }]} value={settings.learning} onChange={(value) => update('learning', value as LearningMode)} />
       </SettingGroup>
       <SettingGroup label={copy.systemCards} description={settings.includeSystemCards ? copy.systemCardsOn : copy.systemCardsOff}>
         <Toggle value={settings.includeSystemCards} onChange={(value) => update('includeSystemCards', value)} copy={copy} />
       </SettingGroup>
-      <SettingGroup label={copy.theme}><ChoiceRow items={[{ value: 'dark', label: copy.dark }, { value: 'light', label: copy.light }]} value={settings.theme} onChange={(value) => update('theme', value as Theme)} /></SettingGroup>
-      <SettingGroup label={copy.language}><ChoiceRow items={localeOptions.map((item) => ({ value: item.id, label: item.label }))} value={settings.locale} onChange={(value) => update('locale', value as Locale)} /></SettingGroup>
+      <SettingGroup label={copy.theme}><ChoiceRow ariaLabel={copy.theme} items={[{ value: 'dark', label: copy.dark }, { value: 'light', label: copy.light }]} value={settings.theme} onChange={(value) => update('theme', value as Theme)} /></SettingGroup>
+      <SettingGroup label={copy.language}><ChoiceRow ariaLabel={copy.language} items={localeOptions.map((item) => ({ value: item.id, label: item.label }))} value={settings.locale} onChange={(value) => update('locale', value as Locale)} /></SettingGroup>
       <SettingGroup label={copy.motion}><Toggle value={settings.motion} onChange={(value) => update('motion', value)} copy={copy} /></SettingGroup>
       <SettingGroup label={copy.sound}><Toggle value={settings.sound} onChange={(value) => update('sound', value)} copy={copy} /></SettingGroup>
       <SettingGroup label={copy.introEyebrow}>
@@ -810,32 +848,33 @@ function SettingGroup({ label, description, children }: { label: string; descrip
   return <section className="setting-group"><div><h3>{label}</h3>{description ? <p>{description}</p> : null}</div>{children}</section>
 }
 
-function ChoiceRow({ items, value, onChange }: { items: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void }) {
-  return <div className="choice-row">{items.map((item) => <button key={item.value} type="button" className={value === item.value ? 'active' : ''} onClick={() => onChange(item.value)}>{item.label}</button>)}</div>
+function ChoiceRow({ ariaLabel, items, value, onChange }: { ariaLabel: string; items: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void }) {
+  return <div className="choice-row" role="group" aria-label={ariaLabel}>{items.map((item) => <button key={item.value} type="button" aria-pressed={value === item.value} className={value === item.value ? 'active' : ''} onClick={() => onChange(item.value)}>{item.label}</button>)}</div>
 }
 
 function Toggle({ value, onChange, copy }: { value: boolean; onChange: (value: boolean) => void; copy: ReturnType<typeof getCopy> }) {
   return <button className={`toggle ${value ? 'active' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}><span />{value ? copy.on : copy.off}</button>
 }
 
-function Select({ value, onChange, children }: { value: string; onChange: (value: string) => void; children: ReactNode }) {
-  return <select value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>
+function Select({ ariaLabel, value, onChange, children }: { ariaLabel: string; value: string; onChange: (value: string) => void; children: ReactNode }) {
+  return <select aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>
 }
 
 function LibraryPanel({ shortcuts, locale, platform, query, setQuery }: {
   shortcuts: Shortcut[]; locale: Locale; platform: Platform; query: string; setQuery: (value: string) => void
 }) {
+  const copy = getCopy(locale)
   const filtered = shortcuts.filter((item) => `${item.action} ${item.category} ${shortcutSpecialty(item)}`.toLowerCase().includes(query.toLowerCase()))
   return (
     <div className="library-panel">
-      <input className="drawer-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={getCopy(locale).search} />
+      <input className="drawer-search" aria-label={copy.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} />
       <p className="drawer-count">{filtered.length} / {shortcuts.length}</p>
-      <div className="library-list">{filtered.map((shortcut) => (
+      {filtered.length ? <div className="library-list">{filtered.map((shortcut) => (
         <div className="library-item" key={shortcut.id}>
-          <div><strong>{shortcutAction(locale, shortcut.action)}</strong><span>{specialtyName(locale, shortcutSpecialty(shortcut))} · {shortcut.capture === 'simulated' ? getCopy(locale).unscored : categoryName(locale, shortcut.category)}</span></div>
+          <div><strong>{shortcutAction(locale, shortcut.action)}</strong><span>{specialtyName(locale, shortcutSpecialty(shortcut))} · {shortcut.capture === 'simulated' ? copy.unscored : categoryName(locale, shortcut.category)}</span></div>
           <small>{formatSequence(shortcut.realKeys ? [shortcut.realKeys] : shortcutSequence(shortcut), platform)}</small>
         </div>
-      ))}</div>
+      ))}</div> : <p className="empty-message" role="status">{copy.noLibraryResults}</p>}
     </div>
   )
 }
@@ -845,7 +884,7 @@ function HistoryPanel({ progress, locale }: { progress: ProgressState; locale: L
   return <div className="history-list">{progress.recentSessions.length ? progress.recentSessions.map((session) => (
     <div className="history-item" key={session.id}>
       <time>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(session.date)}</time>
-      <strong>{session.accuracy}%</strong><span>{session.correct} recalls · {session.durationSec}s</span>
+      <strong>{session.accuracy}%</strong><span>{session.correct} {copy.recallUnit} · {session.durationSec}s</span>
     </div>
   )) : <p className="empty-message">{copy.noHistory}</p>}</div>
 }

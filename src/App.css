@@ -1,7 +1,7 @@
 .app {
   --ink: #ebe7dc;
   --muted: #999387;
-  --quiet: #817d73;
+  --quiet: #918c82;
   --canvas: #121210;
   --surface: #1a1916;
   --surface-2: #22201c;
@@ -47,6 +47,15 @@ button:disabled { opacity: .36; cursor: not-allowed; }
   padding: .7rem 1rem; color: var(--canvas); background: var(--signal);
 }
 .skip-link:focus { top: 1rem; }
+
+.storage-alert {
+  position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%);
+  width: min(620px, calc(100% - 28px)); display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line)); border-radius: 6px;
+  padding: 11px 13px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow);
+  font-size: 12px; line-height: 1.4;
+}
+.storage-alert button { flex: 0 0 auto; border: 0; color: var(--signal); background: transparent; cursor: pointer; }
 
 .masthead, .key-footer {
   position: relative; z-index: 3;
@@ -380,6 +389,7 @@ button:disabled { opacity: .36; cursor: not-allowed; }
   cursor: pointer;
 }
 .intent-secondary button:hover:not(:disabled) { border-color: var(--signal); color: var(--ink); }
+.weak-empty { grid-column: 2; margin: -14px 0 0; color: var(--quiet); font-size: 11px; }
 
 .overlay {
   position: fixed; z-index: 20; inset: 0; display: grid; place-items: start center;
@@ -480,7 +490,7 @@ button:disabled { opacity: .36; cursor: not-allowed; }
 @media (max-width: 720px) {
   .masthead, .key-footer, .practice-stage, .results, .onboarding, .ready-home { width: min(100% - 28px, 100%); }
   .masthead { min-height: 64px; }
-  .utility-nav button:not(:last-child), .key-footer span:nth-child(2) { display: none; }
+  .utility-nav button:nth-child(2), .key-footer span:nth-child(2) { display: none; }
   .practice-stage { min-height: 480px; padding-inline: 0; }
   .stage-hud { grid-template-columns: 1fr 1fr; }
   .hud-center { display: none; }
@@ -521,6 +531,7 @@ button:disabled { opacity: .36; cursor: not-allowed; }
   .ready-home { min-height: auto; grid-template-columns: 1fr; gap: 24px; padding: 30px 0 100px; }
   .ready-example { border-left: 0; border-top: 1px solid var(--line); padding-inline: 0; }
   .intent-actions { grid-template-columns: 1fr; }
+  .weak-empty { grid-column: 1; margin-top: -12px; }
 }
 
 @media (pointer: coarse) and (max-width: 900px) {

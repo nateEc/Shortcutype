@@ -60,6 +60,7 @@ export function ReadyHome({
           ))}
           <button type="button" onClick={onAdvanced}>{copy.advancedSetup}</button>
         </div>
+        {!hasWeak ? <p className="weak-empty" role="status">{copy.emptyWeak}</p> : null}
       </div>
     </section>
   )
